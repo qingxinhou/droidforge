@@ -8,9 +8,10 @@ Root 补丁流程收进一个界面里，专治「记不住命令、找不到分
 Windows / macOS / Linux 通用，单文件可执行，**所有命令都在本机执行，不上传任何设备数据**。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-3b9eff.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/qingxinhou/droidforge?color=3b9eff)](https://github.com/qingxinhou/droidforge/releases/latest)
+[![build](https://github.com/qingxinhou/droidforge/actions/workflows/build.yml/badge.svg)](https://github.com/qingxinhou/droidforge/actions/workflows/build.yml)
 [![Go](https://img.shields.io/badge/Go-1.23+-22d3ee.svg)](https://go.dev)
 [![Wails](https://img.shields.io/badge/Wails-v2.12-3b9eff.svg)](https://wails.io)
-[![build](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
 
 ---
 
@@ -78,7 +79,7 @@ Windows / macOS / Linux 通用，单文件可执行，**所有命令都在本机
 
 ## 下载
 
-前往 [Releases](../../releases) 获取对应平台的构建产物：
+前往 [Releases](https://github.com/qingxinhou/droidforge/releases/latest) 获取对应平台的构建产物：
 
 - `DroidForge-windows-amd64.zip`
 - `DroidForge-macos-universal.zip`
