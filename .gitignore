@@ -28,3 +28,7 @@ Thumbs.db
 # Go
 *.test
 *.out
+
+# 临时 tag/提交信息文件
+_tag*.txt
+.tmp_commit*.txt

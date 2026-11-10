@@ -57,7 +57,7 @@ func (c *Client) ListPackagesDetail(ctx context.Context, serial string, includeS
 		if !strings.HasPrefix(line, "package:") {
 			continue
 		}
-		path, pkg, ok := strings.Cut(strings.TrimPrefix(line, "package:"), "=")
+		path, pkg, ok := splitPkgLine(line)
 		if !ok {
 			continue
 		}

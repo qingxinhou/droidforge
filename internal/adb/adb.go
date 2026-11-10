@@ -298,8 +298,7 @@ func (c *Client) ListPackages(ctx context.Context, serial string, includeSystem 
 		if !strings.HasPrefix(line, "package:") {
 			continue
 		}
-		body := strings.TrimPrefix(line, "package:")
-		path, pkg, ok := strings.Cut(body, "=")
+		path, pkg, ok := splitPkgLine(line)
 		if !ok {
 			continue
 		}

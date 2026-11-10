@@ -1,8 +1,10 @@
 // Package backup 把设备上的常用数据拉到本机。
 //
-// 走 `adb exec-out tar -cf -` 而不是 adb pull 的原因：
+// 走 `adb exec-out tar -cf - | base64` 而不是 adb pull 的原因：
 //  1. 一个连接传完整棵目录，小文件极多时比逐个 pull 快一个量级；
-//  2. exec-out 不做 pty 换行转换，二进制裸流不会被破坏；
+//  2. 设备端先 base64 编码，管道里只跑 ASCII，才能同时躲开 adb 的两个毛病：
+//     把设备端 stderr 合并进 stdout、在 Windows 上把 \n 改写成 \r\n。
+//     裸二进制流会被这两点毁掉（tar 头直接错位）；
 //  3. 解包时能逐文件判断「已存在且大小一致就跳过」，天然支持增量。
 //
 // 通讯录与短信走 content provider 查询，导出成 CSV——它们不在文件系统里，
@@ -13,6 +15,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -343,6 +346,14 @@ func Run(ctx context.Context, bin, serial string, plan *Plan, opt Options, onPro
 }
 
 // pullTree 用 tar 流把一个类别的所有目录拉到 dst。
+//
+// 裸 tar 流经 adb 传到 Windows 上必坏，两个原因叠在一起：
+//  1. adb 会把设备端 stderr 合并进 stdout，tar 对绝对路径打的
+//     "removing leading '/' from member names" 警告会插进数据流里；
+//  2. Windows 版 adb 会把 \n 改写成 \r\n，tar 的 512 字节头随之错位。
+//
+// 因此改为在设备端补上 2>/dev/null 并用 base64 编码，让管道里只跑纯 ASCII。
+// Go 的 base64 解码器会忽略 \r 与 \n，不需要额外剥离。
 func pullTree(ctx context.Context, bin, serial string, c CategoryPlan, paths []string, dst string, skipExisting bool, onBytes func(int64), onLine func(string)) (files, skipped int, bytes int64, entries []manifestEntry, err error) {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return 0, 0, 0, nil, err
@@ -352,8 +363,7 @@ func pullTree(ctx context.Context, bin, serial string, c CategoryPlan, paths []s
 	if serial != "" {
 		args = append(args, "-s", serial)
 	}
-	args = append(args, "exec-out", "tar", "-cf", "-")
-	args = append(args, paths...)
+	args = append(args, "exec-out", "tar -cf - "+shellJoin(paths)+" 2>/dev/null | base64")
 
 	stdout, wait, err := runner.Stream(ctx, "", bin, args...)
 	if err != nil {
@@ -363,7 +373,16 @@ func pullTree(ctx context.Context, bin, serial string, c CategoryPlan, paths []s
 	// 否则进程堵在写 stdout 上不退出，设备连接一直被占着。
 	defer stdout.Close()
 
-	tr := tar.NewReader(stdout)
+	files, skipped, bytes, entries, err = extractTar(base64.NewDecoder(base64.StdEncoding, stdout), dst, skipExisting, onBytes, onLine)
+	if werr := wait(); werr != nil && files == 0 {
+		return files, skipped, bytes, entries, fmt.Errorf("设备侧打包失败（%v），请确认设备支持 tar 与 base64", werr)
+	}
+	return files, skipped, bytes, entries, err
+}
+
+// extractTar 把 tar 流解到 dst，只写普通文件。
+func extractTar(r io.Reader, dst string, skipExisting bool, onBytes func(int64), onLine func(string)) (files, skipped int, bytes int64, entries []manifestEntry, err error) {
+	tr := tar.NewReader(r)
 	for {
 		hdr, terr := tr.Next()
 		if terr == io.EOF {
@@ -416,10 +435,16 @@ func pullTree(ctx context.Context, bin, serial string, c CategoryPlan, paths []s
 			ModTime: hdr.ModTime.Format(time.RFC3339),
 		})
 	}
-	if werr := wait(); werr != nil && files == 0 {
-		return files, skipped, bytes, entries, werr
-	}
 	return files, skipped, bytes, entries, nil
+}
+
+// shellJoin 把若干路径拼成安全的 shell 参数串。
+func shellJoin(paths []string) string {
+	parts := make([]string, 0, len(paths))
+	for _, p := range paths {
+		parts = append(parts, "'"+strings.ReplaceAll(p, "'", "'\\''")+"'")
+	}
+	return strings.Join(parts, " ")
 }
 
 // safeRel 把 tar 里的路径变成安全的相对路径。

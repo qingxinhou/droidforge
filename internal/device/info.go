@@ -65,7 +65,7 @@ func Collect(ctx context.Context, a *adb.Client, serial string) (*DeviceInfo, er
 		"ro.product.model", "ro.product.brand", "ro.product.device", "ro.product.name",
 		"ro.build.version.release", "ro.build.version.sdk", "ro.build.version.security_patch",
 		"ro.build.display.id", "ro.build.fingerprint", "ro.build.type", "ro.build.tags",
-		"ro.product.cpu.abi", "ro.product.cpu.abilist", "ro.board.platform",
+		"ro.product.cpu.abi", "ro.product.cpu.abilist", "ro.board.platform", "ro.soc.model",
 		"ro.boot.slot_suffix", "ro.boot.verifiedbootstate", "ro.boot.flash.locked",
 		"ro.build.ab_update", "ro.debuggable", "ro.secure", "ro.build.characteristics",
 	}
@@ -84,7 +84,12 @@ func Collect(ctx context.Context, a *adb.Client, serial string) (*DeviceInfo, er
 	info.BuildTags = props["ro.build.tags"]
 	info.ABI = props["ro.product.cpu.abi"]
 	info.ABIList = props["ro.product.cpu.abilist"]
-	info.SoC = props["ro.board.platform"]
+	// board.platform 在 MTK 上常是兼容命名（天玑 9200+ 会报 mt6895），
+	// ro.soc.model 才是完整型号，优先用它。
+	info.SoC = strings.TrimSpace(props["ro.soc.model"])
+	if info.SoC == "" {
+		info.SoC = props["ro.board.platform"]
+	}
 	info.Slot = strings.TrimPrefix(props["ro.boot.slot_suffix"], "_")
 	info.IsAB = info.Slot != "" || props["ro.build.ab_update"] == "true"
 	info.VerifiedBoot = props["ro.boot.verifiedbootstate"]

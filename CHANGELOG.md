@@ -3,6 +3,68 @@
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.8.2] - 2026-11-10
+
+第一次接真机跑（Redmi K60 至尊版 / Android 13 / MT6896 / A-B 槽位 / BL 已解锁）。
+一轮下来挖出五个「单测全绿、真机全废」的问题，全部修掉。EDL 仍未实测，手上没有
+9008 环境。
+
+### 修复：备份（v1.8.0 起在 Windows 上完全不可用）
+
+- **裸 tar 流经 adb 传递必坏**，两个原因叠加：Windows 版 adb 会把设备端输出的
+  `\n` 改写成 `\r\n`，tar 的 512 字节头随之错位；同时 adb 会把设备端 stderr
+  合并进 stdout，tar 对绝对路径打的 `removing leading '/'` 警告会直接插进数据流。
+  实测设备端 `tar | wc -c` 是 3072 字节，管道收到 3111 字节 —— 备份 100% 失败。
+  现在改为在设备端补 `2>/dev/null` 并 `| base64`，让管道里只跑 ASCII；
+  Go 的 base64 解码器本身忽略换行，无需额外剥 `\r`。
+  实机验证：15 个文件落盘，md5 与设备端完全一致。
+
+### 修复：分区表
+
+- **容量全是 0**：Android 10+ 起 shell 读 `/proc/partitions`、
+  `/sys/class/block/*/size`、`blockdev` 一律 `Permission denied`。
+  改为用 `df -k` 补已挂载分区，其余如实返回 `-1`（未知），界面显示「—」
+  并提示「需 root 或 Fastboot」，不再把「读不到」伪装成 0。
+- **挂载点一个都匹配不上**：by-name 给 `/dev/block/sdc43`，mapper 给分区名，
+  `mount` 给 `/dev/block/dm-9`，三套命名互不相干。原先直接用字符串相等比较，
+  55 个 dm 设备命中 0 个。现在解析 mapper 的符号链接建立 dm 编号映射，并处理
+  verity 层（`system_a` 指向数据层 dm-3，实际挂载的是 `system-verity` 的 dm-9）。
+  实机命中数 0 → 16。
+- **`by-uuid` 被当成一条分区**：`ls /dev/block/mapper` 会带出这个目录，
+  现按行首文件类型过滤。
+- **APEX 混进分区表**：`com.android.*` 的 device-mapper 并非可刷分区，
+  已过滤。实机条目 129 → 105，其中 94 条物理分区、12 条逻辑分区。
+
+### 修复：应用列表
+
+- **Android 14+ 的包名全部解析错**：安装路径形如
+  `/data/app/~~AbC==/com.foo-XyZ==/base.apk` 自身带等号，原先用 `strings.Cut`
+  从第一个等号切分，路径被截断、包名里塞进半截路径，后续按包名的操作全部失效。
+  改为取最后一个等号，并抽成 `splitPkgLine` 加 8 组用例锁住两种布局。
+
+### 修复：电池
+
+- **`0 mA` / `0.00 W` 是假读数**：`/sys/class/power_supply/*/current_now`
+  在 Android 10+ 同样被拒，`currentUa` 恒为 0；前端写的 `|| '—'` 对字符串 "0"
+  不生效，于是把「读不到」显示成了真实测量值。现在显式判断可用性，
+  无读数时显示「—」并说明需 root，功率曲线一并隐藏。
+
+### 修复：设备信息
+
+- **SoC 显示成 `mt6895`**：MTK 的 `ro.board.platform` 是兼容命名，
+  天玑 9200+ 会报 mt6895。改为优先 `ro.soc.model`（`MT6896Z/CZA`），取不到再回退。
+
+### 新增
+
+- `tools/devcheck`：接上真机后一把跑完设备信息、分区、CPU、电池、应用列表与
+  备份的诊断程序，用来在真机上验证解析结果。不参与打包。
+
+### 文档
+
+- 已知限制补四条：通讯录 / 短信导出需要 root（Android 11+ 直接抛
+  `SecurityException`）、分区容量多半读不到、实时电流需 root、
+  备份为什么走 base64。
+
 ## [1.8.1] - 2026-11-10
 
 修一轮验收时挖出来的问题。全部是「代码能跑、测试能过，但真机上会坏」的类型。

@@ -17,7 +17,11 @@ const filtered = computed(() => {
   )
 })
 
-const totalSize = computed(() => list.value.reduce((s, p) => s + p.sizeBytes, 0))
+// 无 root 时物理分区容量读不到（-1），只累加已知值，避免出现负数或虚高的总量
+const totalSize = computed(() =>
+  list.value.reduce((s, p) => s + (p.sizeBytes > 0 ? p.sizeBytes : 0), 0)
+)
+const knownCount = computed(() => list.value.filter((p) => p.sizeBytes > 0).length)
 
 async function load() {
   if (!needAdb()) return
@@ -80,6 +84,9 @@ onMounted(() => {
         <span class="text-slate-300">{{ list.length }} 个分区</span>
         <span class="tag">{{ fmtBytes(totalSize) }}</span>
         <span class="tag tag-accent">{{ list.filter(p => p.dynamic).length }} 动态</span>
+        <span v-if="knownCount < list.length" class="text-[10.5px] text-slate-500">
+          {{ list.length - knownCount }} 个容量不可读（Android 10+ 限制，需 root 或 Fastboot）
+        </span>
       </div>
       <div class="max-h-[540px] overflow-y-auto">
         <table class="w-full text-[11px]">
@@ -98,7 +105,7 @@ onMounted(() => {
             <tr v-for="p in filtered" :key="p.name + p.block" class="border-b border-ink-800 hover:bg-ink-800/50">
               <td class="px-4 py-1.5 mono text-slate-200">{{ p.name }}</td>
               <td class="px-3 py-1.5 mono text-[10px] text-muted">{{ p.block }}</td>
-              <td class="px-3 py-1.5 text-right mono text-slate-400">{{ p.sizeBytes ? fmtBytes(p.sizeBytes) : '—' }}</td>
+              <td class="px-3 py-1.5 text-right mono text-slate-400">{{ p.sizeBytes > 0 ? fmtBytes(p.sizeBytes) : '—' }}</td>
               <td class="px-3 py-1.5">
                 <span v-if="p.slot" class="tag">{{ p.slot.toUpperCase() }}</span>
                 <span v-else class="text-slate-700">—</span>

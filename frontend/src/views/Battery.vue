@@ -31,6 +31,10 @@ const avgPower = computed(() => {
 })
 const maxPower = computed(() => samples.value.reduce((a, s) => Math.max(a, s.power), 0))
 
+// Android 10+ 的 SELinux 策略会拒绝 shell 读 /sys/class/power_supply/*/current_now，
+// 此时 currentUa 恒为 0。不能把它当成「0 mA 真实读数」展示出去。
+const currentReadable = computed(() => (info.value?.currentUa ?? 0) !== 0)
+
 const levelPath = computed(() => buildPath(samples.value.map((s) => s.level), 100))
 const powerPath = computed(() => buildPath(samples.value.map((s) => s.power), Math.max(5, maxPower.value)))
 
@@ -224,7 +228,7 @@ onBeforeUnmount(stopRecording)
         </div>
         <div class="flex items-end gap-4">
           <div>
-            <div class="text-[22px] font-medium leading-none text-accent">{{ info?.powerW?.toFixed(2) || '—' }}<span class="ml-1 text-[10px] text-muted">W</span></div>
+            <div class="text-[22px] font-medium leading-none text-accent">{{ currentReadable ? info?.powerW?.toFixed(2) : '—' }}<span class="ml-1 text-[10px] text-muted">W</span></div>
             <div class="mt-1 text-[10px] text-muted">当前</div>
           </div>
           <div>
@@ -236,13 +240,16 @@ onBeforeUnmount(stopRecording)
             <div class="mt-1 text-[10px] text-muted">峰值</div>
           </div>
           <div class="ml-auto text-right">
-            <div class="text-[16px] leading-none text-slate-200">{{ info?.currentMa?.toFixed(0) || '—' }}<span class="ml-1 text-[10px] text-muted">mA</span></div>
+            <div class="text-[16px] leading-none text-slate-200">{{ currentReadable ? info?.currentMa?.toFixed(0) : '—' }}<span class="ml-1 text-[10px] text-muted">mA</span></div>
             <div class="mt-1 text-[10px] text-muted">电流</div>
           </div>
         </div>
         <svg viewBox="0 0 320 60" class="mt-3 h-[60px] w-full">
-          <path v-if="powerPath" :d="powerPath" fill="none" stroke="#38bdf8" stroke-width="1.5" />
+          <path v-if="currentReadable && powerPath" :d="powerPath" fill="none" stroke="#38bdf8" stroke-width="1.5" />
         </svg>
+        <div v-if="!currentReadable" class="mt-1 text-[10px] text-muted">
+          当前设备的电流节点被系统拒绝读取（Android 10+ 限制），实时功率不可用；电压、温度与电量仍然准确。
+        </div>
       </div>
 
       <!-- 电量曲线 -->

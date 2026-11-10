@@ -1,6 +1,12 @@
 package backup
 
 import (
+	"archive/tar"
+	"bytes"
+	"encoding/base64"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -159,5 +165,99 @@ func TestParseContentRowsIgnoresEqualsInBody(t *testing.T) {
 	}
 	if rows[0]["address"] != "95588" {
 		t.Errorf("address = %q", rows[0]["address"])
+	}
+}
+
+// TestExtractTarSurvivesCRLF 锁住真机上踩到的坑：
+// Windows 版 adb 会把设备端输出的 \n 改写成 \r\n，裸 tar 流的 512 字节头
+// 会因此错位，整个备份静默失败。现在设备端先 base64，这里验证
+// 「base64 + CRLF 换行」仍然能完整解包。
+func TestExtractTarSurvivesCRLF(t *testing.T) {
+	body := []byte("第一行\n第二行\r\n第三行\n")
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "sdcard/DCIM/camera/a.txt",
+		Mode: 0o644,
+		Size: int64(len(body)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 模拟 toybox base64 的 76 列换行，再模拟 adb 把 \n 变成 \r\n
+	enc := base64.StdEncoding.EncodeToString(raw.Bytes())
+	var b64 strings.Builder
+	for i := 0; i < len(enc); i += 76 {
+		end := i + 76
+		if end > len(enc) {
+			end = len(enc)
+		}
+		b64.WriteString(enc[i:end])
+		b64.WriteString("\r\n")
+	}
+
+	dst := t.TempDir()
+	files, _, total, entries, err := extractTar(
+		base64.NewDecoder(base64.StdEncoding, strings.NewReader(b64.String())),
+		dst, false, func(int64) {}, func(string) {},
+	)
+	if err != nil {
+		t.Fatalf("解包失败: %v", err)
+	}
+	if files != 1 {
+		t.Fatalf("files = %d, want 1", files)
+	}
+	if total != int64(len(body)) {
+		t.Errorf("bytes = %d, want %d", total, len(body))
+	}
+	if len(entries) != 1 || entries[0].Path != "DCIM/camera/a.txt" {
+		t.Errorf("entries = %+v", entries)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, "DCIM", "camera", "a.txt"))
+	if err != nil {
+		t.Fatalf("读回失败: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("内容不一致:\n got=%q\nwant=%q", got, body)
+	}
+}
+
+// TestExtractTarSkipsExisting 验证增量：已存在且大小一致的文件不重复写。
+func TestExtractTarSkipsExisting(t *testing.T) {
+	body := []byte("same-size-content")
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	tw.WriteHeader(&tar.Header{Name: "sdcard/Download/x.bin", Mode: 0o644, Size: int64(len(body))})
+	tw.Write(body)
+	tw.Close()
+
+	dst := t.TempDir()
+	first := base64.StdEncoding.EncodeToString(raw.Bytes())
+	if _, _, _, _, err := extractTar(base64.NewDecoder(base64.StdEncoding, strings.NewReader(first)), dst, true, func(int64) {}, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	files, skipped, _, _, err := extractTar(base64.NewDecoder(base64.StdEncoding, strings.NewReader(first)), dst, true, func(int64) {}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files != 0 || skipped != 1 {
+		t.Errorf("第二次 files=%d skipped=%d, want 0/1", files, skipped)
+	}
+}
+
+// TestShellJoinQuotes 确保路径进 shell 前被单引号包住，且内部引号正确转义。
+func TestShellJoinQuotes(t *testing.T) {
+	got := shellJoin([]string{"/sdcard/DCIM", "/sdcard/a b", "/sdcard/it's"})
+	want := `'/sdcard/DCIM' '/sdcard/a b' '/sdcard/it'\''s'`
+	if got != want {
+		t.Errorf("shellJoin = %s, want %s", got, want)
 	}
 }
