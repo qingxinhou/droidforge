@@ -1,0 +1,30 @@
+# 构建产物
+build/bin/
+*.exe
+*.app
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+
+# 前端
+node_modules/
+frontend/dist/*
+!frontend/dist/.gitkeep
+
+# 图标生成器产物
+tools/icongen.exe
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out

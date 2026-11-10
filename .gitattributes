@@ -1,0 +1,16 @@
+# 统一换行符：仓库里一律 LF，检出时不做转换。
+# 否则 Windows 上提交的 CRLF 会让 CI 的 gofmt 检查全部报错。
+* text=auto eol=lf
+
+# 这些必须是二进制，不能被当文本处理
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.exe binary
+*.dll binary
+*.zip binary
+
+# Windows 批处理需要 CRLF 才能正常执行
+*.bat text eol=crlf
+*.cmd text eol=crlf

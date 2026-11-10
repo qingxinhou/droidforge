@@ -1,0 +1,176 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # 与平台无关的质量门禁：格式、静态检查、单元测试（含竞态检测）。
+  # 单独一个 job 是为了让失败原因一眼可见，不必翻三份平台日志。
+  check:
+    name: check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Install frontend deps
+        run: npm ci --prefix frontend
+
+      - name: Frontend typecheck
+        run: npm run typecheck --prefix frontend
+
+      - name: Frontend build
+        run: npm run build --prefix frontend
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # 解析器与契约测试不依赖 GUI，先跑一遍快的。
+      - name: go test
+        run: go test ./internal/...
+
+      # 关键：数据竞争检测。internal/session 的并发契约必须在这里守住，
+      # 否则 app.go 的「取消 / 新任务 / 配置写入」交错问题无法被静态检查发现。
+      - name: go test -race
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=2 ./internal/...
+
+  build:
+    name: build (${{ matrix.platform }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows/amd64
+            os: windows-latest
+            artifact: DroidForge-windows-amd64
+          - platform: darwin/universal
+            os: macos-latest
+            artifact: DroidForge-macos-universal
+          - platform: linux/amd64
+            os: ubuntu-22.04
+            artifact: DroidForge-linux-amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Install Wails CLI
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: wails build -platform ${{ matrix.platform }} -clean -o DroidForge
+
+      - name: Verify binary exists
+        shell: bash
+        run: |
+          if [ ! -d build/bin ] || [ -z "$(ls -A build/bin)" ]; then
+            echo "构建产物为空，检查 wails build 是否真的成功"
+            exit 1
+          fi
+          ls -la build/bin
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path build/bin/* -DestinationPath DroidForge-windows-amd64.zip
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd build/bin
+          zip -r ../../DroidForge-macos-universal.zip .
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd build/bin
+          tar -czf ../../DroidForge-linux-amd64.tar.gz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            DroidForge-windows-amd64.zip
+            DroidForge-macos-universal.zip
+            DroidForge-linux-amd64.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false

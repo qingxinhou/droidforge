@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; connect-src 'self'" />
+  <title>搞机工坊 DroidForge</title>
+  <script>
+    // 在样式表加载前先套上主题，避免浅色模式下闪一下深色背景
+    try {
+      var m = localStorage.getItem('droidforge.theme') || 'system'
+      var light =
+        m === 'light' ||
+        (m === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches)
+      if (light) {
+        document.documentElement.classList.add('light')
+        document.documentElement.style.colorScheme = 'light'
+      } else {
+        document.documentElement.style.colorScheme = 'dark'
+      }
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="./src/main.ts" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "droidforge",
+  "outputfilename": "DroidForge",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "DroidForge Contributors",
+    "email": "admin@houqingxin.com"
+  },
+  "info": {
+    "companyName": "DroidForge",
+    "productName": "DroidForge 搞机工坊",
+    "productVersion": "1.4.0",
+    "copyright": "Copyright © 2026 DroidForge Contributors",
+    "comments": "开源 Android 搞机工具箱：ADB/Fastboot、刷机包解析、OTA 直链提取、Root 补丁"
+  }
+}

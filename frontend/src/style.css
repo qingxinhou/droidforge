@@ -1,0 +1,274 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * 主题变量
+ *
+ * 深色是默认值（:root）；浅色通过 <html class="light"> 覆盖。
+ * 值统一写成 "R G B" 三元组，Tailwind 里用 rgb(var(--x) / <alpha-value>)
+ * 引用，这样 bg-ink-850/50 这类透明度修饰在两套主题下都能正常工作。
+ * ------------------------------------------------------------------------- */
+:root {
+  --c-ink-950: 8 11 16;
+  --c-ink-900: 11 15 22;
+  --c-ink-850: 15 20 29;
+  --c-ink-800: 19 26 36;
+  --c-ink-750: 24 34 48;
+  --c-ink-700: 30 42 58;
+  --c-ink-600: 42 57 76;
+
+  --c-slate-100: 241 245 249;
+  --c-slate-200: 226 232 240;
+  --c-slate-300: 203 213 225;
+  --c-slate-400: 148 163 184;
+  --c-slate-500: 100 116 139;
+  --c-slate-600: 71 85 105;
+  --c-slate-700: 51 65 85;
+
+  --c-accent: 59 158 255;
+  --c-accent-soft: 29 78 122;
+  --c-accent-cyan: 34 211 238;
+  --c-ok: 52 211 153;
+  --c-warn: 251 191 36;
+  --c-danger: 248 113 113;
+  --c-muted: 135 146 164;
+
+  --c-scroll-thumb: 37 49 65;
+  --c-scroll-thumb-hover: 51 70 92;
+  --c-grid-line: rgba(59, 158, 255, 0.035);
+  --c-selection: rgba(59, 158, 255, 0.35);
+  --c-overlay: rgba(0, 0, 0, 0.65);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+
+  /* SVG 里不能用 rgb 三元组，单独给图表轨道色 */
+  --chart-track: #1e293b;
+
+  color-scheme: dark;
+}
+
+html.light {
+  /* 明度整体反转：原来最深的底变成最浅的底，最深的分隔线变成最浅的灰 */
+  --c-ink-950: 243 245 248;
+  --c-ink-900: 255 255 255;
+  --c-ink-850: 255 255 255;
+  --c-ink-800: 246 248 251;
+  --c-ink-750: 238 242 247;
+  --c-ink-700: 226 232 240;
+  --c-ink-600: 203 213 225;
+
+  --c-slate-100: 15 23 42;
+  --c-slate-200: 30 41 59;
+  --c-slate-300: 51 65 85;
+  --c-slate-400: 71 85 105;
+  --c-slate-500: 100 116 139;
+  --c-slate-600: 124 135 152;
+  --c-slate-700: 184 194 208;
+
+  /* 白底上需要更深的强调色才够对比度 */
+  --c-accent: 37 99 235;
+  --c-accent-soft: 191 219 254;
+  --c-accent-cyan: 8 145 178;
+  --c-ok: 5 150 105;
+  --c-warn: 180 83 9;
+  --c-danger: 220 38 38;
+  --c-muted: 100 112 133;
+
+  --c-scroll-thumb: 203 213 225;
+  --c-scroll-thumb-hover: 176 190 208;
+  --c-grid-line: rgba(37, 99, 235, 0.05);
+  --c-selection: rgba(37, 99, 235, 0.2);
+  /* 浅色下用淡蓝灰蒙层，纯黑会让整屏发脏 */
+  --c-overlay: rgba(15, 23, 42, 0.28);
+  --shadow-panel: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 12px rgba(16, 24, 40, 0.06);
+
+  --chart-track: #e2e8f0;
+
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    @apply bg-ink-950 text-slate-200 antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+      'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-scroll-thumb));
+    border-radius: 4px;
+    border: 2px solid rgb(var(--c-ink-950));
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--c-scroll-thumb-hover));
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  ::selection {
+    background: var(--c-selection);
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-ink-850 border border-ink-700 rounded shadow-panel;
+  }
+
+  .panel-head {
+    @apply flex items-center justify-between px-4 h-10 border-b border-ink-700;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between px-4 h-10 border-b border-ink-700;
+  }
+
+  .panel-title {
+    @apply text-[12px] font-medium tracking-wide text-slate-300;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded border border-ink-600
+      bg-ink-800 text-slate-200 text-[12px] whitespace-nowrap transition-colors duration-100
+      hover:bg-ink-700 hover:border-ink-600 active:bg-ink-750
+      disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-ink-800;
+  }
+
+  .btn-primary {
+    @apply border-accent/50 bg-accent/15 text-accent hover:bg-accent/25 hover:border-accent/70;
+  }
+
+  .btn-danger {
+    @apply border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 hover:border-danger/60;
+  }
+
+  .btn-ok {
+    @apply border-ok/40 bg-ok/10 text-ok hover:bg-ok/20 hover:border-ok/60;
+  }
+
+  .btn-sm {
+    @apply h-7 px-2 text-[11px];
+  }
+
+  .btn-icon {
+    @apply h-8 w-8 px-0;
+  }
+
+  .input {
+    @apply h-8 w-full px-2.5 rounded border border-ink-600 bg-ink-900 text-slate-200
+      text-[12px] outline-none transition-colors
+      placeholder:text-slate-600 focus:border-accent/70 focus:bg-ink-850;
+  }
+
+  .label {
+    @apply block text-[11px] text-muted mb-1.5;
+  }
+
+  .tag {
+    @apply inline-flex items-center gap-1 h-5 px-1.5 rounded-sm text-[10px] font-medium
+      border border-ink-600 bg-ink-800 text-muted;
+  }
+
+  .tag-ok {
+    @apply border-ok/30 bg-ok/10 text-ok;
+  }
+  .tag-warn {
+    @apply border-warn/30 bg-warn/10 text-warn;
+  }
+  .tag-danger {
+    @apply border-danger/30 bg-danger/10 text-danger;
+  }
+  .tag-accent {
+    @apply border-accent/30 bg-accent/10 text-accent;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-2.5 h-9 px-3 mx-2 rounded text-[12.5px] text-slate-400
+      border border-transparent cursor-pointer transition-colors duration-100
+      hover:text-slate-200 hover:bg-ink-800;
+  }
+
+  .nav-item-active {
+    @apply text-accent bg-accent/10 border-accent/20 hover:bg-accent/15 hover:text-accent;
+  }
+
+  .kv {
+    @apply flex items-baseline justify-between gap-3 py-1.5 border-b border-ink-700/60 last:border-0;
+  }
+  .kv-k {
+    @apply text-[11.5px] text-muted shrink-0;
+  }
+  .kv-v {
+    @apply text-[12px] text-slate-200 text-right truncate;
+  }
+
+  .mono {
+    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, Menlo, monospace;
+  }
+
+  .divider {
+    @apply h-px bg-ink-700 my-3;
+  }
+
+  .card-hover {
+    @apply transition-all duration-150 hover:border-accent/40 hover:bg-ink-800/80 cursor-pointer;
+  }
+}
+
+/* 日志行 */
+.log-line {
+  @apply whitespace-pre-wrap break-all leading-[1.55];
+}
+
+/* 细网格背景 */
+.grid-bg {
+  background-image: linear-gradient(var(--c-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--c-grid-line) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* 去掉 number input 箭头 */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* 过渡 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.12s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
