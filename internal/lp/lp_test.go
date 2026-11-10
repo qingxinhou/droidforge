@@ -173,6 +173,49 @@ func TestParseSparseSuper(t *testing.T) {
 	}
 }
 
+// TestBuildWithSparsePartition 验证输入分区本身是 sparse 时，
+// 元数据按展开后的长度登记，且 super 里存的是展开后的数据。
+func TestBuildWithSparsePartition(t *testing.T) {
+	dir := t.TempDir()
+	raw := bytes.Repeat([]byte{0x3A}, 10000) // 故意不按 4096 对齐
+	sparsePart := writeTemp(t, dir, "system.img", makeSparse(t, raw))
+	const blk = 4096
+	logical := (len(raw) + blk - 1) / blk * blk
+
+	out := filepath.Join(dir, "super.img")
+	meta, err := Build(context.Background(), []BuildPartition{{Name: "system", Path: sparsePart}}, out, BuildOptions{}, nil)
+	if err != nil {
+		t.Fatalf("合成失败：%v", err)
+	}
+	if len(meta.Partitions) != 1 {
+		t.Fatalf("分区数 = %d", len(meta.Partitions))
+	}
+	if got := meta.Partitions[0].SizeBytes; got != int64(logical) {
+		t.Errorf("分区登记大小 = %d，期望展开后的 %d（把 sparse 文件长度当成容量了）", got, logical)
+	}
+
+	gotDir := filepath.Join(dir, "out")
+	res, err := Split(context.Background(), out, gotDir, []string{"system"}, nil)
+	if err != nil {
+		t.Fatalf("拆分失败：%v", err)
+	}
+	got, err := os.ReadFile(res[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != logical {
+		t.Fatalf("拆出的长度 = %d，期望 %d", len(got), logical)
+	}
+	if !bytes.HasPrefix(got, raw) {
+		t.Error("拆出的内容与原始数据不一致——sparse 可能被原样写进了 super")
+	}
+	for i := len(raw); i < len(got); i++ {
+		if got[i] != 0 {
+			t.Fatalf("尾部第 %d 字节应为补齐的 0，实际 0x%02x", i, got[i])
+		}
+	}
+}
+
 func TestParseRejectsNonSuper(t *testing.T) {
 	dir := t.TempDir()
 	p := writeTemp(t, dir, "random.img", bytes.Repeat([]byte{7}, 8192))

@@ -396,6 +396,78 @@ func TestFirehoseWritePartition(t *testing.T) {
 	}
 }
 
+// TestFirehoseWritePartitionPadsShortImage 验证非扇区对齐的镜像能写完：
+// 最后一段短读要用 0 补齐，否则每次都在最后一块失败。
+func TestFirehoseWritePartitionPadsShortImage(t *testing.T) {
+	host, dev := net.Pipe()
+	const sectorSize = 4096
+	payload := bytes.Repeat([]byte{0x77}, 5000) // 不按扇区对齐
+	got := &bytes.Buffer{}
+
+	go func() {
+		defer dev.Close()
+		for i := 0; i < 2; i++ {
+			if _, err := readUntil(dev, "</data>"); err != nil {
+				return
+			}
+			dev.Write([]byte(`<response value="ACK" rawmode="false" />`))
+			chunk := make([]byte, sectorSize)
+			if _, err := io.ReadFull(dev, chunk); err != nil {
+				return
+			}
+			got.Write(chunk)
+			dev.Write([]byte(`<response value="ACK" rawmode="false" />`))
+		}
+	}()
+
+	f := NewFirehose(host, nil)
+	f.MaxPayload = sectorSize
+	f.Timeout = 5 * time.Second
+
+	err := f.WritePartition(context.Background(), "boot_a", bytes.NewReader(payload), WriteOptions{
+		SectorSize:  sectorSize,
+		StartSector: 0,
+		Sectors:     2,
+	}, nil)
+	if err != nil {
+		t.Fatalf("非对齐镜像应当能写完，实际失败：%v", err)
+	}
+	if got.Len() != 2*sectorSize {
+		t.Fatalf("设备收到 %d 字节，期望 %d", got.Len(), 2*sectorSize)
+	}
+	if !bytes.Equal(got.Bytes()[:len(payload)], payload) {
+		t.Error("前半段内容不一致")
+	}
+	for i := len(payload); i < got.Len(); i++ {
+		if got.Bytes()[i] != 0 {
+			t.Fatalf("偏移 %d 应为补齐的 0，实际 0x%02x", i, got.Bytes()[i])
+		}
+	}
+}
+
+// TestFirehoseConfigureNegotiatesPayload 验证按设备协商出的上限切段——
+// 设备会把 configure 请求原样回显，必须取最后一次出现的值。
+func TestFirehoseConfigureNegotiatesPayload(t *testing.T) {
+	host, dev := net.Pipe()
+	go func() {
+		defer dev.Close()
+		if _, err := readUntil(dev, "</data>"); err != nil {
+			return
+		}
+		dev.Write([]byte(`<configure MemoryName="ufs" MaxPayloadSizeToTargetInBytes="65536" />` +
+			`<response value="ACK" rawmode="false" />`))
+	}()
+
+	f := NewFirehose(host, nil)
+	f.Timeout = 5 * time.Second
+	if err := f.Configure(context.Background(), ConfigureOptions{MaxPayload: 1 << 20}); err != nil {
+		t.Fatalf("configure 应当成功：%v", err)
+	}
+	if f.MaxPayload != 65536 {
+		t.Errorf("MaxPayload = %d，期望按设备协商结果降到 65536", f.MaxPayload)
+	}
+}
+
 func TestFirehoseReadPartition(t *testing.T) {
 	host, dev := net.Pipe()
 	const sectorSize = 4096

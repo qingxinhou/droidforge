@@ -213,18 +213,42 @@ func ParseFHResponse(raw string) FHResponse {
 
 // attrValue 取 XML 片段里某个属性的值，支持单双引号。
 func attrValue(s, name string) string {
+	return attrValueFrom(s, name, false)
+}
+
+// attrValueLast 取**最后一次**出现的属性值。
+//
+// configure 的响应里设备会把请求原样回显一遍，再跟上真正生效的配置；
+// 取第一次会拿到我们自己请求的值，等于没读到协商结果。
+func attrValueLast(s, name string) string {
+	return attrValueFrom(s, name, true)
+}
+
+func attrValueFrom(s, name string, last bool) string {
 	for _, prefix := range []string{name + `="`, name + `='`} {
-		i := strings.Index(s, prefix)
-		if i < 0 {
-			continue
+		var found string
+		offset := 0
+		for {
+			i := strings.Index(s[offset:], prefix)
+			if i < 0 {
+				break
+			}
+			i += offset
+			rest := s[i+len(prefix):]
+			quote := prefix[len(prefix)-1]
+			j := strings.IndexByte(rest, quote)
+			if j < 0 {
+				break
+			}
+			found = rest[:j]
+			if !last {
+				return found
+			}
+			offset = i + len(prefix) + j
 		}
-		rest := s[i+len(prefix):]
-		quote := prefix[len(prefix)-1]
-		j := strings.IndexByte(rest, quote)
-		if j < 0 {
-			continue
+		if found != "" {
+			return found
 		}
-		return rest[:j]
 	}
 	return ""
 }

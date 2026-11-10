@@ -159,12 +159,27 @@ func Render(steps []rom.FlashStep, scriptDir string, opt Options, kind string) s
 			echo("切换到 fastbootd 以写入动态分区...")
 			line("fastboot reboot fastboot")
 			if kind == "bat" {
+				line("if errorlevel 1 goto :fail")
 				line("timeout /t 8 /nobreak >nul")
-			} else {
+			} else if kind == "sh" {
 				line("sleep 8")
 			}
 			line("")
 			inFastbootd = true
+		}
+		if !s.NeedsFastbootd && inFastbootd {
+			// 正常情况排序会把这类分区排在前面，走到这里说明步骤是外部传进来的。
+			// 物理分区在 fastbootd 里刷不了，得先退回 bootloader。
+			echo("切回 bootloader...")
+			line("fastboot reboot bootloader")
+			if kind == "bat" {
+				line("if errorlevel 1 goto :fail")
+				line("timeout /t 8 /nobreak >nul")
+			} else if kind == "sh" {
+				line("sleep 8")
+			}
+			line("")
+			inFastbootd = false
 		}
 		cmd := fmt.Sprintf("fastboot flash %s %s", name, quotePath(scriptDir, s.Image, kind))
 		line(cmd)
@@ -211,7 +226,8 @@ func quotePath(scriptDir, image, kind string) string {
 	} else {
 		p = filepath.ToSlash(p)
 	}
-	if strings.ContainsAny(p, " \t") {
+	// 除了空格，括号与 & 也会打断 cmd 的解析（"Program Files (x86)" 这种路径很常见）。
+	if strings.ContainsAny(p, " \t&()^!'\u00a0") {
 		return `"` + p + `"`
 	}
 	return p

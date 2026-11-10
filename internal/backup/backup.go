@@ -359,6 +359,9 @@ func pullTree(ctx context.Context, bin, serial string, c CategoryPlan, paths []s
 	if err != nil {
 		return 0, 0, 0, nil, err
 	}
+	// 解包中途失败会提前 return，这里必须关掉管道顺带杀掉 adb，
+	// 否则进程堵在写 stdout 上不退出，设备连接一直被占着。
+	defer stdout.Close()
 
 	tr := tar.NewReader(stdout)
 	for {

@@ -8,7 +8,7 @@ func TestParseContentRows(t *testing.T) {
 	out := "Row: 0 _id=1, display_name=张三, data1=13800138000, data2=2, data3=手机, mimetype=vnd.android.cursor.item/phone_v2\n" +
 		"Row: 1 _id=2, display_name=李四, 北京, data1=lisi@example.com, mimetype=vnd.android.cursor.item/email_v2\n"
 
-	rows := parseContentRows(out)
+	rows := parseContentRows(out, []string{"display_name", "data1", "data2", "data3", "mimetype"})
 	if len(rows) != 2 {
 		t.Fatalf("行数 = %d，期望 2", len(rows))
 	}
@@ -32,7 +32,7 @@ func TestParseContentRows(t *testing.T) {
 
 func TestParseContentRowsIgnoresNoise(t *testing.T) {
 	out := "No result found.\n\nRow: 0 _id=7, address=10086, type=1, body=余额提醒\n"
-	rows := parseContentRows(out)
+	rows := parseContentRows(out, []string{"address", "date", "type", "body"})
 	if len(rows) != 1 {
 		t.Fatalf("行数 = %d，期望 1", len(rows))
 	}
@@ -142,4 +142,22 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestParseContentRowsIgnoresEqualsInBody 验证正文里出现 x=y 时不会把后面的列挤歪。
+func TestParseContentRowsIgnoresEqualsInBody(t *testing.T) {
+	out := "Row: 0 _id=3, address=95588, date=1700000000000, type=1, body=您的验证码是 code=8821 请勿泄露\n"
+	rows := parseContentRows(out, []string{"address", "date", "type", "body"})
+	if len(rows) != 1 {
+		t.Fatalf("行数 = %d", len(rows))
+	}
+	if got := rows[0]["body"]; got != "您的验证码是 code=8821 请勿泄露" {
+		t.Errorf("body = %q", got)
+	}
+	if rows[0]["type"] != "1" {
+		t.Errorf("type = %q（正文里的等号被当成新字段了）", rows[0]["type"])
+	}
+	if rows[0]["address"] != "95588" {
+		t.Errorf("address = %q", rows[0]["address"])
+	}
 }

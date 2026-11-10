@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -175,6 +176,10 @@ func (a *App) EdlGPT(lun int) (*edl.GPT, error) {
 }
 
 // readGPT 逐种扇区大小尝试解析分区表。
+//
+// 只在「读到了数据但不是 GPT」时才换扇区大小重试。传输层失败直接返回：
+// 那种情况下管道里可能还留着半截数据，换个大小再读只会读到错位的内容，
+// 反而把「设备没响应」伪装成「分区表 CRC 不对」。
 func readGPT(ctx context.Context, rt *edlRuntime, lun int) (*edl.GPT, error) {
 	var lastErr error
 	for _, ss := range []int{4096, 512} {
@@ -187,13 +192,15 @@ func readGPT(ctx context.Context, rt *edlRuntime, lun int) (*edl.GPT, error) {
 			Sectors:     lbas,
 		}, nil)
 		if err != nil {
-			lastErr = err
-			continue
+			return nil, err
 		}
 		g, perr := edl.ParseGPT(buf.Bytes(), ss, lun)
 		if perr != nil {
 			lastErr = perr
-			continue
+			if errors.Is(perr, edl.ErrNoGPT) {
+				continue
+			}
+			return nil, perr
 		}
 		return g, nil
 	}

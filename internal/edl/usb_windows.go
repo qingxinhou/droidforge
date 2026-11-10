@@ -55,21 +55,35 @@ type winusbPipeInformation struct {
 }
 
 const (
-	digcfPresent          = 0x00000002
-	digcfDeviceInterface  = 0x00000010
-	genericRead           = 0x80000000
-	genericWrite          = 0x40000000
-	fileShareRead         = 0x00000001
-	fileShareWrite        = 0x00000002
-	openExisting          = 3
-	fileAttributeNormal   = 0x00000080
-	fileFlagOverlapped    = 0x40000000
-	errorInsufficientBuf  = 122
-	errorNoMoreItems      = 259
-	errorSemTimeout       = 121
-	usbdPipeTypeBulk      = 2
-	pipeTransferTimeout   = 0x03
-	pipeIgnoreShortPacket = 0x05
+	digcfPresent         = 0x00000002
+	digcfDeviceInterface = 0x00000010
+	genericRead          = 0x80000000
+	genericWrite         = 0x40000000
+	fileShareRead        = 0x00000001
+	fileShareWrite       = 0x00000002
+	openExisting         = 3
+	fileAttributeNormal  = 0x00000080
+	errorNoMoreItems     = 259
+	errorSemTimeout      = 121
+	usbdPipeTypeBulk     = 2
+
+	// WinUSB 的管道策略编号（WINUSB_PIPE_POLICY）。
+	//
+	// 注意 0x05 是 ALLOW_PARTIAL_READS 而不是 IGNORE_SHORT_PACKETS（后者是 0x04）：
+	// 我们要的正是「有多少先返回多少」，所以用前者。写错过一次，别再改回去。
+	pipeTransferTimeout     = 0x03
+	pipeAllowPartialReads   = 0x05
+	pipeMaximumTransferSize = 0x08
+
+	// inPipeTimeout 要短：Firehose 的响应长度不定，靠短读累积，
+	// 读超时返回 0 字节让上层继续等，而不是一直阻塞。
+	inPipeTimeout = 500
+	// outPipeTimeout 要够长：一整段 1 MB 的数据写下去可能要几十毫秒到几秒，
+	// 卡太紧会在慢速 hub 上误判成写失败。
+	outPipeTimeout = 5000
+	// maxTransferSize 与 Firehose 的 MaxPayload 对齐。WinUSB 默认上限比这个小，
+	// 不显式抬上去，一次性写 1 MB 会被驱动以参数错误直接拒绝。
+	maxTransferSize = 1 << 20
 )
 
 var (
@@ -143,9 +157,15 @@ func ListDevices() ([]Device, error) {
 		if required == 0 {
 			continue
 		}
+		// 至少要装得下 cbSize（4 字节）与路径起始的 4 字节，否则下面取 &buf[4] 会越界。
+		if required < 8 {
+			continue
+		}
 		buf := make([]byte, required)
-		// cbSize 在 64 位上是 8（4 字节字段 + 指针对齐）。
-		*(*uint32)(unsafe.Pointer(&buf[0])) = uint32(unsafe.Sizeof(uintptr(0))) + 4
+		// SP_DEVICE_INTERFACE_DETAIL_DATA_W.cbSize 在 64 位上是 8、32 位上是 6
+		// （4 字节 DWORD + 2 字节 WCHAR，按指针宽度补齐），不是 12。填错会被
+		// SetupDiGetDeviceInterfaceDetailW 判为参数无效，设备永远枚举不出来。
+		*(*uint32)(unsafe.Pointer(&buf[0])) = uint32(4 + unsafe.Sizeof(uintptr(0))/2)
 		r2, _, _ := procSetupDiGetDeviceInterfaceDetail.Call(
 			h, uintptr(unsafe.Pointer(&did)), uintptr(unsafe.Pointer(&buf[0])),
 			uintptr(required), uintptr(unsafe.Pointer(&required)), 0)
@@ -204,6 +224,10 @@ type UsbTransport struct {
 }
 
 // Open 打开设备并初始化 WinUSB。
+//
+// 句柄**不带 FILE_FLAG_OVERLAPPED**：这里全部走同步读写 + 管道超时策略。
+// 带了这个标志却给 WinUsb_ReadPipe / WritePipe 传 NULL OVERLAPPED，
+// 轻则报参数错误，重则「提前报告完成」——大块传输会静默截断，比直接失败更糟。
 func Open(d Device) (*UsbTransport, error) {
 	pathPtr, err := syscall.UTF16PtrFromString(d.Path)
 	if err != nil {
@@ -213,7 +237,7 @@ func Open(d Device) (*UsbTransport, error) {
 		uintptr(unsafe.Pointer(pathPtr)),
 		genericRead|genericWrite,
 		fileShareRead|fileShareWrite,
-		0, openExisting, fileAttributeNormal|fileFlagOverlapped, 0)
+		0, openExisting, fileAttributeNormal, 0)
 	if h == uintptr(syscall.InvalidHandle) {
 		return nil, fmt.Errorf("打开设备失败：%v。若设备挂在 QDLoader 串口驱动上，请先用 Zadig 换成 WinUSB", e)
 	}
@@ -231,16 +255,23 @@ func Open(d Device) (*UsbTransport, error) {
 		return nil, err
 	}
 
-	// 读超时设成 500ms：Firehose 的响应长度不定，靠短读累积，
-	// 超时返回 0 字节让上层继续等，而不是一直阻塞。
-	timeout := uint32(500)
+	// 先抬上限，再设超时与短读策略。
+	maxXfer := uint32(maxTransferSize)
+	for _, pipe := range []uint8{u.inPipe, u.outPipe} {
+		procWinUsbSetPipePolicy.Call(uintptr(u.usb), uintptr(pipe), pipeMaximumTransferSize,
+			uintptr(unsafe.Sizeof(maxXfer)), uintptr(unsafe.Pointer(&maxXfer)))
+	}
+
+	inTimeout := uint32(inPipeTimeout)
 	procWinUsbSetPipePolicy.Call(uintptr(u.usb), uintptr(u.inPipe), pipeTransferTimeout,
-		uintptr(unsafe.Sizeof(timeout)), uintptr(unsafe.Pointer(&timeout)))
-	ignore := uint8(1)
-	procWinUsbSetPipePolicy.Call(uintptr(u.usb), uintptr(u.inPipe), pipeIgnoreShortPacket,
-		uintptr(unsafe.Sizeof(ignore)), uintptr(unsafe.Pointer(&ignore)))
+		uintptr(unsafe.Sizeof(inTimeout)), uintptr(unsafe.Pointer(&inTimeout)))
+	allowPartial := uint8(1)
+	procWinUsbSetPipePolicy.Call(uintptr(u.usb), uintptr(u.inPipe), pipeAllowPartialReads,
+		uintptr(unsafe.Sizeof(allowPartial)), uintptr(unsafe.Pointer(&allowPartial)))
+
+	outTimeout := uint32(outPipeTimeout)
 	procWinUsbSetPipePolicy.Call(uintptr(u.usb), uintptr(u.outPipe), pipeTransferTimeout,
-		uintptr(unsafe.Sizeof(timeout)), uintptr(unsafe.Pointer(&timeout)))
+		uintptr(unsafe.Sizeof(outTimeout)), uintptr(unsafe.Pointer(&outTimeout)))
 	return u, nil
 }
 

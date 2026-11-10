@@ -39,8 +39,8 @@ func UploadLoader(t Transport, image []byte, imageID uint32, logf LogFunc) (*Hel
 	}
 
 	hdr := make([]byte, packetHdrLen)
-	if _, err := io.ReadFull(t, hdr); err != nil {
-		return nil, fmt.Errorf("读取 Hello 失败：%w（设备可能不在 9008 模式）", err)
+	if err := readFull(t, hdr, controlIdle, "读取 Hello"); err != nil {
+		return nil, fmt.Errorf("%w（设备可能不在 9008 模式）", err)
 	}
 	cmd, length, err := ParsePacketHeader(hdr)
 	if err != nil {
@@ -54,8 +54,8 @@ func UploadLoader(t Transport, image []byte, imageID uint32, logf LogFunc) (*Hel
 	}
 	full := make([]byte, length)
 	copy(full, hdr)
-	if _, err := io.ReadFull(t, full[packetHdrLen:]); err != nil {
-		return nil, fmt.Errorf("读取 Hello 正文失败：%w", err)
+	if err := readFull(t, full[packetHdrLen:], controlIdle, "读取 Hello 正文"); err != nil {
+		return nil, err
 	}
 	hello, err := ParseHello(full)
 	if err != nil {
@@ -88,8 +88,8 @@ func UploadLoader(t Transport, image []byte, imageID uint32, logf LogFunc) (*Hel
 		}
 
 		rh := make([]byte, packetHdrLen)
-		if _, err := io.ReadFull(t, rh); err != nil {
-			return nil, fmt.Errorf("偏移 %d 处等待数据请求超时：%w", offset, err)
+		if err := readFull(t, rh, controlIdle, fmt.Sprintf("偏移 %d 处等待数据请求", offset)); err != nil {
+			return nil, err
 		}
 		rcmd, rlen, err := ParsePacketHeader(rh)
 		if err != nil {
@@ -103,7 +103,7 @@ func UploadLoader(t Transport, image []byte, imageID uint32, logf LogFunc) (*Hel
 		}
 		body := make([]byte, rlen)
 		copy(body, rh)
-		if _, err := io.ReadFull(t, body[packetHdrLen:]); err != nil {
+		if err := readFull(t, body[packetHdrLen:], controlIdle, "读取数据请求正文"); err != nil {
 			return nil, err
 		}
 		_, devOffset, want, err := ParseDataRequest(body)
@@ -132,8 +132,8 @@ func UploadLoader(t Transport, image []byte, imageID uint32, logf LogFunc) (*Hel
 	}
 
 	dh := make([]byte, packetHdrLen)
-	if _, err := io.ReadFull(t, dh); err != nil {
-		return nil, fmt.Errorf("等待 Done 超时：%w（loader 可能是坏的或不匹配该机型）", err)
+	if err := readFull(t, dh, controlIdle, "等待 Done"); err != nil {
+		return nil, fmt.Errorf("%w（loader 可能是坏的或不匹配该机型）", err)
 	}
 	dcmd, dlen, err := ParsePacketHeader(dh)
 	if err != nil {
@@ -144,7 +144,7 @@ func UploadLoader(t Transport, image []byte, imageID uint32, logf LogFunc) (*Hel
 	}
 	if dlen > packetHdrLen {
 		skip := make([]byte, dlen-packetHdrLen)
-		_, _ = io.ReadFull(t, skip)
+		_ = readFull(t, skip, controlIdle, "读取 Done 正文")
 	}
 	if _, err := t.Write(EncodeDoneResp(SaharaStatusSuccess)); err != nil {
 		return nil, fmt.Errorf("回 Done 失败：%w", err)
@@ -229,13 +229,23 @@ func (f *Firehose) checkCtx(ctx context.Context) error {
 }
 
 // Configure 建立存储会话。
+//
+// 设备可以在响应里把 MaxPayloadSizeToTargetInBytes 降到比请求更小的值，
+// 必须按它给的值切段，否则后续 program 会被拒或直接截断。
 func (f *Firehose) Configure(ctx context.Context, opt ConfigureOptions) error {
 	if opt.MaxPayload > 0 {
 		f.MaxPayload = opt.MaxPayload
 	}
 	f.logf("配置存储会话：%s，单次上限 %d 字节", opt.MemoryName, f.MaxPayload)
-	if _, err := f.Send(ctx, Configure(opt)); err != nil {
+	resp, err := f.Send(ctx, Configure(opt))
+	if err != nil {
 		return fmt.Errorf("configure 失败：%w。确认 loader 与机型匹配，必要时重新插拔设备再试", err)
+	}
+	if v := attrValueLast(resp.Raw, "MaxPayloadSizeToTargetInBytes"); v != "" {
+		if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil && n > 0 && n < f.MaxPayload {
+			f.logf("设备把单次上限降到 %d 字节", n)
+			f.MaxPayload = n
+		}
 	}
 	return nil
 }
@@ -283,8 +293,14 @@ func (f *Firehose) WritePartition(ctx context.Context, label string, r io.Reader
 		want := n * int64(opt.SectorSize)
 
 		chunk := buf[:want]
-		if _, err := io.ReadFull(r, chunk); err != nil {
-			return fmt.Errorf("读取本地镜像在偏移 %d 处失败：%w", done*int64(opt.SectorSize), err)
+		// 镜像长度不一定按扇区对齐：最后一段短读是正常的，用零补满再写，
+		// 否则非对齐镜像每次都在最后一块失败。buf 是复用的，尾部必须显式清零。
+		nRead, rerr := io.ReadFull(r, chunk)
+		if rerr != nil && !errors.Is(rerr, io.ErrUnexpectedEOF) && !errors.Is(rerr, io.EOF) {
+			return fmt.Errorf("读取本地镜像在偏移 %d 处失败：%w", done*int64(opt.SectorSize), rerr)
+		}
+		for i := nRead; i < len(chunk); i++ {
+			chunk[i] = 0
 		}
 
 		req := ProgramRequest{
@@ -355,9 +371,9 @@ func (f *Firehose) ReadPartition(ctx context.Context, label string, w io.Writer,
 			return fmt.Errorf("read 请求被拒（分区 %s）：%w", label, err)
 		}
 		want := n * int64(opt.SectorSize)
-		copied, err := io.CopyN(w, f.t, want)
+		copied, err := copyN(ctx, w, f.t, want, dataIdle, fmt.Sprintf("读取分区 %s 的数据", label))
 		if err != nil {
-			return fmt.Errorf("读取分区数据失败（已读 %d/%d 字节）：%w", copied, want, err)
+			return fmt.Errorf("已读 %d/%d 字节：%w", copied, want, err)
 		}
 		// 数据之后设备还会发一条 ACK。
 		if _, err := f.readResponse(ctx); err != nil {

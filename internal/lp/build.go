@@ -107,10 +107,20 @@ func Build(ctx context.Context, parts []BuildPartition, out string, opt BuildOpt
 		if st.IsDir() {
 			return nil, fmt.Errorf("%s 是目录，不是镜像", p.Path)
 		}
+		// 分区镜像可能是 sparse 的（从别的工具导出来的很常见）。
+		// 尺寸要按「展开后」算，否则元数据里登记的分区容量会偏小，
+		// 刷进去之后 HAL 按错误大小读，表现是分区内容被截断。
+		size := st.Size()
+		if ra, logical, sparse, oerr := openImage(p.Path); oerr == nil {
+			if sparse {
+				size = logical
+			}
+			ra.Close()
+		}
 		items = append(items, layout{
 			BuildPartition: BuildPartition{Name: name, Path: p.Path, Group: p.Group},
-			size:           st.Size(),
-			sectors:        uint64((st.Size() + sectorSize - 1) / sectorSize),
+			size:           size,
+			sectors:        uint64((size + sectorSize - 1) / sectorSize),
 		})
 	}
 
@@ -247,30 +257,43 @@ func alignUp(v, align int64) int64 {
 	return v
 }
 
+// readAtReader 把 ReaderAt 适配成 Reader，供 io.CopyBuffer 使用。
+type readAtReader struct {
+	ra  readerAt
+	off int64
+}
+
+func (r *readAtReader) Read(p []byte) (int, error) {
+	n, err := r.ra.ReadAt(p, r.off)
+	r.off += int64(n)
+	return n, err
+}
+
+// offsetWriter 从指定偏移开始写，不改变文件自身的读写位置。
+type offsetWriter struct {
+	f   *os.File
+	off int64
+}
+
+func (w *offsetWriter) Write(p []byte) (int, error) {
+	n, err := w.f.WriteAt(p, w.off)
+	w.off += int64(n)
+	return n, err
+}
+
 // copyInto 把 src 写入 dst 的指定偏移。
+//
+// 源镜像可能是 sparse 的，这里统一走 openImage：raw 直接读，
+// sparse 就地展开成逻辑数据——不然把 sparse 文件原样拼进 super，
+// 刷进去之后分区内容是 sparse 头而不是文件系统，开机必然失败。
 func copyInto(dst *os.File, src string, offset int64, buf []byte) error {
-	in, err := os.Open(src)
+	in, _, _, err := openImage(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-
-	pos := offset
-	for {
-		n, rerr := in.Read(buf)
-		if n > 0 {
-			if _, werr := dst.WriteAt(buf[:n], pos); werr != nil {
-				return werr
-			}
-			pos += int64(n)
-		}
-		if rerr == io.EOF {
-			return nil
-		}
-		if rerr != nil {
-			return rerr
-		}
-	}
+	_, err = io.CopyBuffer(&offsetWriter{f: dst, off: offset}, &readAtReader{ra: in}, buf)
+	return err
 }
 
 // writeMetadata 写入两份 geometry、各槽位 metadata 与对应备份。

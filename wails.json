@@ -13,7 +13,7 @@
   "info": {
     "companyName": "DroidForge",
     "productName": "DroidForge 搞机工坊",
-    "productVersion": "1.8.0",
+    "productVersion": "1.8.1",
     "copyright": "Copyright © 2026 DroidForge Contributors",
     "comments": "开源 Android 搞机工具箱：ADB/Fastboot、刷机包解析、OTA 直链提取、Root 补丁"
   }

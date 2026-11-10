@@ -51,7 +51,7 @@ const environment = {
   config,
   os: 'windows',
   arch: 'amd64',
-  appVersion: '1.8.0',
+  appVersion: '1.8.1',
 }
 
 const deviceInfo = {

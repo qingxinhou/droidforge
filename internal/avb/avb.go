@@ -349,24 +349,76 @@ func parseDescriptorBody(d *Descriptor, kind uint64, b []byte) {
 		d.Value = string(b[16+klen : 16+klen+vlen])
 
 	case DescHash:
-		// 8 image_size + 32 hash_algorithm + 4*4 + 60 reserved
-		if len(b) < 8+32+16+60 {
+		// 定长部分 116 字节，后面紧跟 partition_name + salt + digest。
+		//
+		// 字段顺序在不同年代的实现里出现过两种：AOSP libavb 现行布局是
+		// image_size, flags, name_len, salt_len, digest_len, hash_algorithm；
+		// 早期 avbtool 变体则是 image_size, hash_algorithm, name_len…, flags。
+		// 读错的话摘要和算法会整段变成乱码，所以两种都算一遍、取自洽的那个。
+		const fixed = 116
+		if len(b) < fixed {
 			return
 		}
 		d.ImageSize = be.Uint64(b[0:])
-		d.HashAlgorithm = trimNul(b[8:40])
-		nameLen := be.Uint32(b[40:])
-		saltLen := be.Uint32(b[44:])
-		digestLen := be.Uint32(b[48:])
-		d.Flags = be.Uint32(b[52:])
-		tail := b[116:]
-		if uint64(nameLen+saltLen+digestLen) > uint64(len(tail)) {
+		tail := b[fixed:]
+
+		type hashLayout struct {
+			flags     uint32
+			nameLen   uint32
+			saltLen   uint32
+			digestLen uint32
+			algorithm string
+			score     int
+		}
+		cands := [2]hashLayout{
+			{
+				// image_size(0:8) flags(8) name_len(12) salt_len(16) digest_len(20)
+				// hash_algorithm(24:56) reserved(56:116)
+				flags: be.Uint32(b[8:]), nameLen: be.Uint32(b[12:]), saltLen: be.Uint32(b[16:]),
+				digestLen: be.Uint32(b[20:]), algorithm: trimNul(b[24:56]),
+			},
+			{
+				// image_size(0:8) hash_algorithm(8:40) name_len(40) salt_len(44)
+				// digest_len(48) flags(52) reserved(56:116)
+				flags: be.Uint32(b[52:]), nameLen: be.Uint32(b[40:]), saltLen: be.Uint32(b[44:]),
+				digestLen: be.Uint32(b[48:]), algorithm: trimNul(b[8:40]),
+			},
+		}
+		for i := range cands {
+			c := &cands[i]
+			sum := uint64(c.nameLen) + uint64(c.saltLen) + uint64(c.digestLen)
+			if sum == uint64(len(tail)) {
+				c.score += 3
+			} else if sum < uint64(len(tail)) {
+				c.score-- // 说明尾部有没解释的字节，多半是字段读歪了
+			} else {
+				c.score -= 3
+			}
+			if c.nameLen == 0 || c.nameLen > 64 {
+				c.score -= 2
+			}
+			if isHashAlgorithmName(c.algorithm) {
+				c.score += 2
+			}
+		}
+		best := cands[0]
+		if cands[1].score > best.score {
+			best = cands[1]
+		}
+		if best.score <= 0 {
+			// 两种布局都对不上，宁可留空也不输出一段看起来像摘要的垃圾。
 			return
 		}
-		d.PartitionName = string(tail[:nameLen])
-		rest := tail[nameLen:]
-		d.Salt = hexOrEmpty(rest[:saltLen])
-		d.Digest = hexOrEmpty(rest[saltLen : saltLen+digestLen])
+		d.Flags = best.flags
+		d.HashAlgorithm = best.algorithm
+		sum := uint64(best.nameLen) + uint64(best.saltLen) + uint64(best.digestLen)
+		if sum > uint64(len(tail)) {
+			return
+		}
+		d.PartitionName = string(tail[:best.nameLen])
+		rest := tail[best.nameLen:]
+		d.Salt = hexOrEmpty(rest[:best.saltLen])
+		d.Digest = hexOrEmpty(rest[best.saltLen : best.saltLen+best.digestLen])
 
 	case DescHashtree:
 		// 4 + 8*3 + 4*3 + 8*2 + 32 + 4*4 + 60
@@ -407,14 +459,16 @@ func parseDescriptorBody(d *Descriptor, kind uint64, b []byte) {
 		}
 
 	case DescChain:
-		if len(b) < 16+60 {
+		// 4 rollback_index_location + 4 name_len + 4 public_key_len + 4 flags + 64 reserved
+		const fixed = 16 + 64
+		if len(b) < fixed {
 			return
 		}
 		d.RollbackIndexLocation = be.Uint32(b[0:])
 		nameLen := be.Uint32(b[4:])
 		pkLen := be.Uint32(b[8:])
 		d.Flags = be.Uint32(b[12:])
-		tail := b[76:]
+		tail := b[fixed:]
 		if uint64(nameLen) > uint64(len(tail)) {
 			return
 		}
@@ -428,6 +482,15 @@ func trimNul(b []byte) string {
 		b = b[:i]
 	}
 	return string(bytes.TrimSpace(b))
+}
+
+// isHashAlgorithmName 判断一个字段像不像摘要算法名，用来给布局打分。
+func isHashAlgorithmName(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "sha256", "sha512", "blake2b", "sha1", "md5":
+		return true
+	}
+	return false
 }
 
 func hexOrEmpty(b []byte) string {

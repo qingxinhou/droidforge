@@ -568,7 +568,17 @@ func BuildFlashPlan(imagesDir string) ([]FlashStep, error) {
 		}
 		return len(flashOrder)
 	}
-	sort.SliceStable(steps, func(i, j int) bool { return rank(steps[i].Partition) < rank(steps[j].Partition) })
+	// 排序：非动态分区一律排在前面。
+	//
+	// flashOrder 只覆盖常见分区名，没登记的（比如一堆 bootloader 小分区）
+	// rank 会落到末尾；如果只按 rank 排，它们就可能排到 super/system 之后，
+	// 结果是拿着 bootloader 的分区名在 fastbootd 里刷，必然失败。
+	sort.SliceStable(steps, func(i, j int) bool {
+		if steps[i].NeedsFastbootd != steps[j].NeedsFastbootd {
+			return !steps[i].NeedsFastbootd
+		}
+		return rank(steps[i].Partition) < rank(steps[j].Partition)
+	})
 	if len(steps) == 0 {
 		return nil, fmt.Errorf("目录中没有可刷入的镜像")
 	}

@@ -93,6 +93,9 @@ func (a *App) downloadOptions(threads int) download.Options {
 }
 
 // sanitizeName 去掉远端文件名里不适合落盘的字符。
+//
+// 远端给的 Content-Disposition 完全不可信，除了非法字符还要挡掉
+// 全是点、或者带路径分隔的名字——否则可能落到输出目录之外。
 func sanitizeName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -107,5 +110,13 @@ func sanitizeName(name string) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	out := strings.TrimSpace(b.String())
+	trimmed := strings.Trim(out, ".")
+	if trimmed == "" {
+		return ""
+	}
+	if rs := []rune(out); len(rs) > 120 {
+		out = string(rs[:120])
+	}
+	return out
 }

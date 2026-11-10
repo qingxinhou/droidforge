@@ -196,8 +196,13 @@ func loadOrCreateState(dst, rawURL string, probe *Probe, opt Options) (*state, b
 		if b, err := os.ReadFile(statePath); err == nil {
 			var s state
 			if json.Unmarshal(b, &s) == nil && s.URL == rawURL && s.Size == probe.Size && len(s.Segments) > 0 {
-				if fi, err := os.Stat(dst); err == nil && fi.Size() == s.Size {
-					return &s, true, nil
+				// 同一个链接换了文件（CDN 回源到新版本）时 ETag 会变。
+				// 这时接着下，前半段是旧文件、后半段是新文件，刷进去直接变砖。
+				sameFile := s.ETag == "" || probe.ETag == "" || s.ETag == probe.ETag
+				if sameFile {
+					if fi, err := os.Stat(dst); err == nil && fi.Size() == s.Size {
+						return &s, true, nil
+					}
 				}
 			}
 		}
@@ -347,27 +352,49 @@ func runSegments(ctx context.Context, dst, rawURL string, st *state, opt Options
 }
 
 // fetchRange 下载 [start,end] 区间并写入文件对应偏移，返回本次写入字节数。
+//
+// 重试必须从「已经写成功的下一字节」继续：否则每重试一次，
+// 回调就把同一段字节重复计进进度，续传时的 Done 会超过实际内容，
+// 结果是文件中间留一段空洞而界面显示「已下载完」。
 func fetchRange(ctx context.Context, rawURL string, f *os.File, start, end int64, opt Options, onWrite func(int64)) (int64, error) {
 	var lastErr error
+	var done int64
 	for attempt := 0; attempt < 3; attempt++ {
 		if ctx.Err() != nil {
-			return 0, ctx.Err()
+			return done, ctx.Err()
 		}
-		n, err := fetchRangeOnce(ctx, rawURL, f, start, end, opt, onWrite)
+		n, err := fetchRangeOnce(ctx, rawURL, f, start+done, end, opt, onWrite)
+		done += n
 		if err == nil {
-			return n, nil
+			return done, nil
 		}
 		lastErr = err
 		if errors.Is(err, ErrRangeUnsupported) {
-			return 0, err
+			return done, err
+		}
+		if done > end-start {
+			// 已经拿到的比请求的还多，说明服务端在乱给，别再重试了。
+			return done, fmt.Errorf("服务端返回的数据超出请求区间")
 		}
 		select {
 		case <-ctx.Done():
-			return n, ctx.Err()
+			return done, ctx.Err()
 		case <-time.After(time.Duration(attempt+1) * 800 * time.Millisecond):
 		}
 	}
-	return 0, lastErr
+	return done, lastErr
+}
+
+// httpClient 复用一个 Transport：每次新建连接会让分段下载反复握手上百次。
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       60 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 5 * time.Second,
+	},
 }
 
 func fetchRangeOnce(ctx context.Context, rawURL string, f *os.File, start, end int64, opt Options, onWrite func(int64)) (int64, error) {
@@ -381,7 +408,7 @@ func fetchRangeOnce(ctx context.Context, rawURL string, f *os.File, start, end i
 		req.Header.Set("Referer", opt.Referer)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -401,15 +428,21 @@ func fetchRangeOnce(ctx context.Context, rawURL string, f *os.File, start, end i
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, werr := f.WriteAt(buf[:n], pos); werr != nil {
+			// 先截断再写：服务端多给的字节一旦落到文件里，就写进了
+			// 相邻分段的区域，把别人下载好的数据覆盖掉，且不会报错。
+			chunk := buf[:n]
+			if room := end + 1 - pos; int64(len(chunk)) > room {
+				if room <= 0 {
+					return written, fmt.Errorf("服务端返回的数据超出请求区间（已到 %d，区间止于 %d）", pos, end)
+				}
+				chunk = chunk[:room]
+			}
+			if _, werr := f.WriteAt(chunk, pos); werr != nil {
 				return written, werr
 			}
-			pos += int64(n)
-			written += int64(n)
-			onWrite(int64(n))
-			if pos > end+1 {
-				return written, fmt.Errorf("服务端返回的数据超出请求区间")
-			}
+			pos += int64(len(chunk))
+			written += int64(len(chunk))
+			onWrite(int64(len(chunk)))
 		}
 		if rerr == io.EOF {
 			break
@@ -431,7 +464,7 @@ func fetchStream(ctx context.Context, rawURL, dst string, opt Options, expect in
 	if opt.Referer != "" {
 		req.Header.Set("Referer", opt.Referer)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}

@@ -39,8 +39,11 @@ type GPT struct {
 	Note       string `json:"note"`
 }
 
-// errNoGPT 表示这块数据里没有 GPT。
-var errNoGPT = errors.New("没有找到 GPT 头（EFI PART）")
+// ErrNoGPT 表示这块数据里没有 GPT。
+//
+// 导出是因为调用方要区分「这块不是 GPT，换个扇区大小再读一遍」和
+// 「读数据本身失败了」——后者再试一次只会读到半截数据。
+var ErrNoGPT = errors.New("没有找到 GPT 头（EFI PART）")
 
 // ParseGPT 从一段以 LBA0 开头的数据里解析 GPT。
 //
@@ -61,7 +64,7 @@ func ParseGPT(data []byte, sectorSize int, lun int) (*GPT, error) {
 			hdrOff = 512
 			sectorSize = 512
 		} else {
-			return nil, errNoGPT
+			return nil, ErrNoGPT
 		}
 	}
 

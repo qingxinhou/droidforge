@@ -112,6 +112,40 @@ func TestBuildFlashPlan(t *testing.T) {
 	}
 }
 
+// TestBuildFlashPlanDynamicLast 保证动态分区排在最后：
+// 没登记在 flashOrder 里的物理分区（z开头的各种 bootloader 小分区）
+// 也必须排在 super/system 前面，否则脚本会在 fastbootd 里刷它们。
+func TestBuildFlashPlanDynamicLast(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"system.img", "super.img", "boot.img", "zap.img", "xbl.img"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte{0}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps, err := BuildFlashPlan(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenDynamic := false
+	for _, s := range steps {
+		if s.NeedsFastbootd {
+			seenDynamic = true
+			continue
+		}
+		if seenDynamic {
+			t.Fatalf("物理分区 %s 排在了动态分区之后（%v）", s.Partition, planOrder(steps))
+		}
+	}
+}
+
+func planOrder(steps []FlashStep) []string {
+	out := make([]string, 0, len(steps))
+	for _, s := range steps {
+		out = append(out, s.Partition)
+	}
+	return out
+}
+
 func TestBuildFlashPlanEmpty(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte{}, 0o644); err != nil {

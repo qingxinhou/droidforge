@@ -19,12 +19,16 @@ import (
 //
 // 值里可能自带逗号，直接按 ", " 切会错位，所以先定位每个 key 的起点，
 // 再把「当前 key 等号之后 到 下一个 key 之前」整段当作值。
-var (
-	rowPrefixRe = regexp.MustCompile(`^Row:\s*\d+\s+`)
-	keyRe       = regexp.MustCompile(`([A-Za-z0-9_]+)=`)
-)
+//
+// 关键点：只认投影里明确要求的字段名。用通用的 `\w+=` 去匹配的话，
+// 短信正文里出现「订单号=A123」这类片段就会被当成新字段，
+// 后面所有列整体错位，导出的 CSV 完全没法用。
+var rowPrefixRe = regexp.MustCompile(`^Row:\s*\d+\s+`)
 
-func parseContentRows(out string) []map[string]string {
+func parseContentRows(out string, keys []string) []map[string]string {
+	pattern := `(?:^|\s)(` + strings.Join(keys, "|") + `)=`
+	keyRe := regexp.MustCompile(pattern)
+
 	var rows []map[string]string
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
@@ -79,7 +83,7 @@ func exportContacts(ctx context.Context, bin, serial, dst string) (string, error
 	if err != nil {
 		return "", err
 	}
-	rows := parseContentRows(out)
+	rows := parseContentRows(out, []string{"display_name", "data1", "data2", "data3", "mimetype"})
 	if len(rows) == 0 {
 		return "", fmt.Errorf("没有读到任何联系人（可能是系统限制了 provider 访问）")
 	}
@@ -141,7 +145,7 @@ func exportSMS(ctx context.Context, bin, serial, dst string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rows := parseContentRows(out)
+	rows := parseContentRows(out, []string{"address", "date", "type", "body"})
 	if len(rows) == 0 {
 		return "", fmt.Errorf("没有读到任何短信（可能是纯数据机型，或系统限制了 provider 访问）")
 	}

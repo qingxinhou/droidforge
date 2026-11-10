@@ -52,6 +52,102 @@ func rangeServer(t *testing.T, payload []byte) (*httptest.Server, *[]string) {
 	return srv, &seen
 }
 
+// TestFetchRangeRetryDoesNotDoubleCount 验证重试不会把同一段字节重复计入进度。
+//
+// 旧实现每次重试都从原始 start 重新请求，回调却继续累加，
+// seg.Done 会涨到超过分段长度——续传时判定「已完成」，文件中间留空洞。
+func TestFetchRangeRetryDoesNotDoubleCount(t *testing.T) {
+	payload := bytes.Repeat([]byte("Z"), 128<<10)
+	var mu sync.Mutex
+	attempts := map[string]int{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rh := r.Header.Get("Range")
+		mu.Lock()
+		n := attempts[rh]
+		attempts[rh] = n + 1
+		mu.Unlock()
+
+		var start, end int64
+		if _, err := fmt.Sscanf(rh, "bytes=%d-%d", &start, &end); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		if n == 0 {
+			// 第一次只发一小段就断开，逼出重试。
+			w.Write(payload[start : start+1024])
+			panic(http.ErrAbortHandler)
+		}
+		w.Write(payload[start : end+1])
+	}))
+	defer srv.Close()
+
+	dst := filepath.Join(t.TempDir(), "part.bin")
+	f, err := os.Create(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	var total int64
+	got, err := fetchRange(context.Background(), srv.URL, f, 0, int64(len(payload))-1, Options{}, func(n int64) {
+		total += n
+	})
+	if err != nil {
+		t.Fatalf("重试后应当成功：%v", err)
+	}
+	if got != int64(len(payload)) {
+		t.Errorf("返回值 = %d，期望 %d", got, len(payload))
+	}
+	if total != int64(len(payload)) {
+		t.Errorf("进度累计 = %d，期望 %d（重试时重复计数了）", total, len(payload))
+	}
+	onDisk, _ := os.ReadFile(dst)
+	if !bytes.Equal(onDisk, payload) {
+		t.Error("落盘内容与源不一致")
+	}
+}
+
+// TestFetchRangeClampsOverlongResponse 验证服务端多给数据时不会写到相邻分段区域。
+func TestFetchRangeClampsOverlongResponse(t *testing.T) {
+	payload := bytes.Repeat([]byte("Q"), 8192)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 无视请求区间，每次都把整段吐出来。
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(payload)-1, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(payload)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "clamp.bin")
+	// 用 0xEE 铺底，检查区间之外有没有被覆盖。
+	if err := os.WriteFile(dst, bytes.Repeat([]byte{0xEE}, len(payload)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(dst, os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	const want = 4096
+	if _, err := fetchRange(context.Background(), srv.URL, f, 0, want-1, Options{}, func(int64) {}); err != nil {
+		t.Fatalf("读取应当成功：%v", err)
+	}
+	got, _ := os.ReadFile(dst)
+	if !bytes.Equal(got[:want], payload[:want]) {
+		t.Error("区间内数据不正确")
+	}
+	for i := want; i < len(got); i++ {
+		if got[i] != 0xEE {
+			t.Fatalf("区间外第 %d 字节被覆盖成 0x%02x", i, got[i])
+		}
+	}
+}
+
 func TestFetchMultiThread(t *testing.T) {
 	payload := bytes.Repeat([]byte("0123456789abcdef"), 128*1024) // 2 MB
 	srv, _ := rangeServer(t, payload)

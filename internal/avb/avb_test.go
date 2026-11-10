@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,60 @@ func hashDescBody(imageSize uint64, alg, name string, salt, digest []byte, flags
 	body = append(body, salt...)
 	body = append(body, digest...)
 	return body
+}
+
+// hashDescBodyLibavb 按 AOSP libavb 现行的字段顺序拼正文：
+// image_size, flags, name_len, salt_len, digest_len, hash_algorithm, reserved。
+func hashDescBodyLibavb(imageSize uint64, alg, name string, salt, digest []byte, flags uint32) []byte {
+	body := make([]byte, 116, 116+len(name)+len(salt)+len(digest))
+	be := binary.BigEndian
+	be.PutUint64(body[0:], imageSize)
+	be.PutUint32(body[8:], flags)
+	be.PutUint32(body[12:], uint32(len(name)))
+	be.PutUint32(body[16:], uint32(len(salt)))
+	be.PutUint32(body[20:], uint32(len(digest)))
+	putPadded(body[24:56], alg)
+	body = append(body, name...)
+	body = append(body, salt...)
+	body = append(body, digest...)
+	return body
+}
+
+func TestParseHashDescriptorLibavbLayout(t *testing.T) {
+	digest := make([]byte, 32)
+	for i := range digest {
+		digest[i] = 0xCD
+	}
+	salt := []byte{9, 8, 7, 6}
+	body := hashDescBodyLibavb(100663296, "sha256", "system", salt, digest, 3)
+	descs := buildDescriptor(DescHash<<16, body)
+
+	img, err := ParseBytes(buildVBMeta(11, 0, 2, descs))
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if len(img.Descriptors) != 1 {
+		t.Fatalf("描述符数量 = %d", len(img.Descriptors))
+	}
+	d := img.Descriptors[0]
+	if d.Kind != "hash" {
+		t.Fatalf("kind = %q", d.Kind)
+	}
+	if d.PartitionName != "system" {
+		t.Errorf("分区名 = %q，期望 system（说明字段顺序按错误布局读）", d.PartitionName)
+	}
+	if d.HashAlgorithm != "sha256" {
+		t.Errorf("算法 = %q，期望 sha256", d.HashAlgorithm)
+	}
+	if d.ImageSize != 100663296 || d.Flags != 3 {
+		t.Errorf("imageSize=%d flags=%d", d.ImageSize, d.Flags)
+	}
+	if d.Salt != "09080706" {
+		t.Errorf("salt = %q", d.Salt)
+	}
+	if want := strings.Repeat("cd", 32); d.Digest != want {
+		t.Errorf("digest = %q", d.Digest)
+	}
 }
 
 func putPadded(dst []byte, s string) {
@@ -232,8 +287,8 @@ func TestParseVBMetaBehindFooter(t *testing.T) {
 }
 
 func TestParseChainAndCmdline(t *testing.T) {
-	// chain partition
-	cb := make([]byte, 76)
+	// chain partition：定长部分 4+4+4+4+64 = 80 字节，名字接在后面。
+	cb := make([]byte, 80)
 	be := binary.BigEndian
 	be.PutUint32(cb[0:], 2) // rollback_index_location
 	name := "vbmeta_system"
