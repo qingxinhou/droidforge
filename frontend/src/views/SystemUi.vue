@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { Signal, Wifi, WifiOff, Eye, RotateCcw, Check } from 'lucide-vue-next'
+import { computed, onMounted, ref, watch } from 'vue'
+import { Signal, Wifi, WifiOff, Eye, RotateCcw, Check, ShieldAlert } from 'lucide-vue-next'
 import { api } from '../api'
 import { state, toast, needAdb, run } from '../store'
-import type { SysUIState } from '../types'
+import type { SysUIState, TweaksCaps } from '../types'
 
 const s = ref<SysUIState | null>(null)
+const caps = ref<TweaksCaps | null>(null)
 const busy = ref(false)
+
+// 本机 adb shell 到底能不能写系统设置。null = 还没探测过，按可写处理，
+// 避免首帧把所有控件闪一下灰。
+const canSystem = computed(() => (caps.value ? caps.value.systemWritable : true))
+const canSecure = computed(() => (caps.value ? caps.value.secureWritable : true))
+const canGlobal = computed(() => (caps.value ? caps.value.globalWritable : true))
+const blocked = computed(() => !!caps.value && caps.value.note !== '')
 
 const icons = [
   { key: 'rotate', label: '旋转锁定' },
@@ -36,6 +44,7 @@ async function load() {
   try {
     const t = await api.getTweaks(state.serial)
     s.value = t.sysui
+    caps.value = t.caps
     selected.value = [...(t.sysui.iconBlacklist ?? [])]
   } catch (e: any) {
     toast('err', e?.message ?? String(e))
@@ -50,6 +59,10 @@ function toggleIcon(key: string) {
 
 async function applyIcons() {
   if (!needAdb()) return
+  if (!canSecure.value) {
+    toast('warn', '本机禁止 adb shell 写系统设置，状态栏图标改不了')
+    return
+  }
   await run(selected.value.length ? `已隐藏 ${selected.value.length} 个状态栏图标` : '状态栏图标已全部显示', () =>
     api.setIconBlacklist(state.serial, selected.value),
   )
@@ -58,6 +71,12 @@ async function applyIcons() {
 
 async function toggleFlag(field: 'clockSeconds' | 'batteryPercent' | 'immersive' | 'captiveDisabled') {
   if (!needAdb() || !s.value) return
+  // 沉浸 / Wi-Fi 检测写 global，其余写 secure，权限要求不同，分别拦。
+  const allowed = field === 'immersive' || field === 'captiveDisabled' ? canGlobal.value : canSecure.value
+  if (!allowed) {
+    toast('warn', '本机禁止 adb shell 写系统设置，这个开关点了也不会生效')
+    return
+  }
   const next = !s.value[field]
   busy.value = true
   try {
@@ -76,18 +95,33 @@ async function toggleFlag(field: 'clockSeconds' | 'batteryPercent' | 'immersive'
 
 async function setQuick(n: number) {
   if (!needAdb()) return
+  if (!canSecure.value) {
+    toast('warn', '本机禁止 adb shell 写系统设置，快捷开关数量改不了')
+    return
+  }
   await run(`快捷开关数 → ${n}`, () => api.setQuickCount(state.serial, n))
   await load()
 }
 
 async function resetAll() {
   if (!needAdb()) return
+  if (!canSystem.value && !canSecure.value && !canGlobal.value) {
+    toast('warn', '本机禁止 adb shell 写系统设置，无法恢复')
+    return
+  }
+  const sec = canSecure.value
+  const sys = canSystem.value
+  const glob = canGlobal.value
   await run('系统界面设置已恢复', async () => {
-    await api.setIconBlacklist(state.serial, [])
-    await api.setClockSeconds(state.serial, false)
-    await api.setBatteryPercent(state.serial, false)
-    await api.setImmersive(state.serial, false)
-    await api.setCaptivePortal(state.serial, false)
+    if (sec) {
+      await api.setIconBlacklist(state.serial, [])
+      await api.setClockSeconds(state.serial, false)
+    }
+    if (sec && sys) await api.setBatteryPercent(state.serial, false)
+    if (glob) {
+      await api.setImmersive(state.serial, false)
+      await api.setCaptivePortal(state.serial, false)
+    }
   })
   await load()
 }
@@ -111,6 +145,20 @@ onMounted(() => void load())
       </div>
     </div>
 
+    <!-- 权限警示：本机 adb shell 改不了系统设置时，先告诉用户，别让人一次次点 -->
+    <div v-if="blocked" class="panel mb-4 border-warn/30 bg-warn/[0.05] p-3">
+      <div class="flex items-start gap-2">
+        <ShieldAlert class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
+        <div>
+          <p class="text-[11.5px] leading-relaxed text-slate-200">{{ caps?.note }}</p>
+          <p class="mt-1 text-[10.5px] leading-relaxed text-muted">
+            这些开关都靠 <code class="rounded bg-ink-800 px-1">settings put</code> 写入，
+            被 ROM 拒绝时不会弹窗，只会静默失败 —— 所以下面不可用的控件已置灰。
+          </p>
+        </div>
+      </div>
+    </div>
+
     <div v-if="state.mode !== 'adb'" class="panel py-16 text-center text-[12px] text-muted">
       该功能需要设备处于 ADB 模式
     </div>
@@ -127,7 +175,8 @@ onMounted(() => void load())
             <button
               v-for="i in icons"
               :key="i.key"
-              class="flex items-center gap-1.5 rounded border px-2 py-1.5 text-[10.5px] transition-colors"
+              :disabled="!canSecure"
+              class="flex items-center gap-1.5 rounded border px-2 py-1.5 text-[10.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
               :class="selected.includes(i.key)
                 ? 'border-accent/50 bg-accent/15 text-accent'
                 : 'border-ink-600 bg-ink-900 text-slate-400 hover:border-accent/30'"
@@ -142,7 +191,7 @@ onMounted(() => void load())
             <span class="text-[10px] text-muted">
               已隐藏 {{ selected.length }} 个图标 —— 键值：icon_blacklist
             </span>
-            <button class="btn btn-primary" @click="applyIcons">应用</button>
+            <button class="btn btn-primary disabled:cursor-not-allowed disabled:opacity-40" :disabled="!canSecure" @click="applyIcons">应用</button>
           </div>
         </div>
       </div>
@@ -151,19 +200,35 @@ onMounted(() => void load())
       <div class="panel">
         <div class="panel-header"><span class="panel-title"><Eye class="h-3.5 w-3.5" /> 显示开关</span></div>
         <div class="p-4 space-y-1">
-          <button class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800" @click="toggleFlag('clockSeconds')">
+          <button
+            class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            :disabled="!canSecure"
+            @click="toggleFlag('clockSeconds')"
+          >
             <span class="text-slate-300">时钟显示秒</span>
             <span class="tag" :class="s?.clockSeconds ? 'tag-ok' : 'tag'">{{ s?.clockSeconds ? '开' : '关' }}</span>
           </button>
-          <button class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800" @click="toggleFlag('batteryPercent')">
+          <button
+            class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            :disabled="!canSecure || !canSystem"
+            @click="toggleFlag('batteryPercent')"
+          >
             <span class="text-slate-300">状态栏电量百分比</span>
             <span class="tag" :class="s?.batteryPercent ? 'tag-ok' : 'tag'">{{ s?.batteryPercent ? '开' : '关' }}</span>
           </button>
-          <button class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800" @click="toggleFlag('immersive')">
+          <button
+            class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            :disabled="!canGlobal"
+            @click="toggleFlag('immersive')"
+          >
             <span class="text-slate-300">全局沉浸模式</span>
             <span class="tag" :class="s?.immersive ? 'tag-ok' : 'tag'">{{ s?.immersive ? '开' : '关' }}</span>
           </button>
-          <button class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800" @click="toggleFlag('captiveDisabled')">
+          <button
+            class="flex w-full items-center justify-between rounded px-2 py-2 text-[11.5px] hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            :disabled="!canGlobal"
+            @click="toggleFlag('captiveDisabled')"
+          >
             <span class="flex items-center gap-1.5 text-slate-300">
               <WifiOff class="h-3 w-3" /> 关闭 Wi-Fi 网络检测
             </span>
@@ -177,7 +242,14 @@ onMounted(() => void load())
         <div class="panel-header"><span class="panel-title"><Wifi class="h-3.5 w-3.5" /> 下拉快捷开关数量</span></div>
         <div class="p-4">
           <div class="flex items-center gap-2">
-            <button v-for="n in [3, 4, 5, 6, 7, 8]" :key="n" class="btn flex-1" :class="s?.quickCount === n ? 'btn-primary' : ''" @click="setQuick(n)">
+            <button
+              v-for="n in [3, 4, 5, 6, 7, 8]"
+              :key="n"
+              class="btn flex-1 disabled:cursor-not-allowed disabled:opacity-40"
+              :class="s?.quickCount === n ? 'btn-primary' : ''"
+              :disabled="!canSecure"
+              @click="setQuick(n)"
+            >
               {{ n }}
             </button>
           </div>

@@ -261,3 +261,100 @@ func TestShellJoinQuotes(t *testing.T) {
 		t.Errorf("shellJoin = %s, want %s", got, want)
 	}
 }
+
+// TestParseScanRealShape 用真机输出的形状验证计数解析。
+//
+// 真机（Redmi K60 至尊版 / Android 13）上的实际输出形状：
+// 先是若干 du 行，@@@COUNTS 之后每个文件类别一行 find 计数，
+// 再是通讯录 / 短信的两个数字。旧实现根本没收计数，
+// 导致界面上的「N 项」恒为 0，日志里的「共 1 项」其实是文件数。
+func TestParseScanRealShape(t *testing.T) {
+	out := "14\t/sdcard/DCIM\n" +
+		"4\t/sdcard/Download\n" +
+		"19\t/sdcard/Pictures\n" +
+		"11\t/sdcard/Movies\n" +
+		"64\t/sdcard/Music\n" +
+		"104\t/sdcard/Documents\n" +
+		markerCounts + "\n" +
+		"3\n" + // photos: DCIM / Pictures / Movies
+		"2\n" + // documents: Download / Documents
+		"0\n" + // audio
+		"0\n" + // pictures
+		markerContacts + "\n" +
+		"0\n" +
+		markerSMS + "\n" +
+		"0\n" +
+		markerEnd + "\n"
+
+	plan := parseScan(out, "SERIAL")
+
+	var photos, documents, audio, contacts CategoryPlan
+	cats := 0
+	for _, c := range plan.Categories {
+		if c.Exists {
+			cats++
+		}
+		switch c.ID {
+		case "photos":
+			photos = c
+		case "documents":
+			documents = c
+		case "audio":
+			audio = c
+		case "contacts":
+			contacts = c
+		}
+	}
+
+	if photos.Files != 3 || photos.Size != (14+19+11)*1024 {
+		t.Errorf("照片类别 = %d 个 / %d 字节，期望 3 个 / %d 字节", photos.Files, photos.Size, (14+19+11)*1024)
+	}
+	if documents.Files != 2 {
+		t.Errorf("文档类别文件数 = %d，期望 2", documents.Files)
+	}
+	if audio.Files != 0 || !audio.Exists {
+		t.Errorf("音乐类别 = %+v，应为「有目录、0 个文件」", audio)
+	}
+	if plan.TotalFiles != 5 {
+		t.Errorf("总文件数 = %d，期望 5", plan.TotalFiles)
+	}
+	if cats != 3 {
+		t.Errorf("可备份类别 = %d，期望 3（照片 / 文档 / 音乐）", cats)
+	}
+	if contacts.Exists || contacts.Files != 0 {
+		t.Errorf("通讯录不应被判为可备份: %+v", contacts)
+	}
+}
+
+// TestParseScanWithoutCounts 旧格式（没有 @@@COUNTS 段）不能 panic，
+// 文件数留 0 即可，别把空切片下标越界搞崩。
+func TestParseScanWithoutCounts(t *testing.T) {
+	out := "14\t/sdcard/DCIM\n" + markerContacts + "\n0\n" + markerSMS + "\n0\n" + markerEnd + "\n"
+	plan := parseScan(out, "S")
+	if len(plan.Categories) != len(categories) {
+		t.Fatalf("类别数 = %d，期望 %d", len(plan.Categories), len(categories))
+	}
+	for _, c := range plan.Categories {
+		if c.Kind == "files" && c.Files != 0 {
+			t.Errorf("%s 文件数 = %d，缺计数段时应为 0", c.ID, c.Files)
+		}
+	}
+}
+
+// TestScanScriptCountsOnlyRows 锁住短信 / 通讯录的计数方式。
+//
+// `content query` 查不到数据时会往 stdout 打一句 "No result found."，
+// 用 `wc -l` 数行会把这句当成 1 条记录 —— 真机日志里就因此报过
+// 「1 条短信」，而设备实际是 0 条（provider 被拦）。
+func TestScanScriptCountsOnlyRows(t *testing.T) {
+	s := scanScript()
+	if !contains(s, "grep -c '^Row:'") {
+		t.Error("计数应该只数 Row: 行，不能用 wc -l")
+	}
+	if contains(s, "raw_contacts --projection _id 2>/dev/null | wc -l") {
+		t.Error("通讯录仍在用 wc -l 数行，会把错误提示当成记录")
+	}
+	if contains(s, "--uri content://sms --projection _id 2>/dev/null | wc -l") {
+		t.Error("短信仍在用 wc -l 数行，会把错误提示当成记录")
+	}
+}

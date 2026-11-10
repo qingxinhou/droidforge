@@ -97,19 +97,100 @@ func (c *Client) ForceStopApp(ctx context.Context, serial, pkg string) error {
 	return err
 }
 
-// LaunchApp 尝试启动应用的主 Activity。
+// LaunchApp 启动应用。
+//
+// 真机上三种情况会让朴素的 `monkey -p <pkg> -c LAUNCHER` 失败：
+//  1. 应用只有文件打开的 Activity（WPS lite 就是这种插件包），压根没有
+//     MAIN/LAUNCHER 入口 —— monkey 回 "No activities found"；
+//  2. 应用被 disable-user 禁用了；
+//  3. monkey 本身在部分 ROM 上不可靠，但 am start 能起。
+//
+// 所以按「先解析出具体组件 → am start → monkey 兜底 → 精确报错」走，
+// 而不是把所有失败都压成一句「未找到可启动的 Activity」。
 func (c *Client) LaunchApp(ctx context.Context, serial, pkg string) error {
 	if err := validPkg(pkg); err != nil {
 		return err
 	}
-	out, err := c.Shell(ctx, serial, "monkey -p "+pkg+" -c android.intent.category.LAUNCHER 1")
-	if err != nil {
-		return err
+
+	// 1) 让系统告诉我们启动组件是谁，拿到后直接 am start。
+	out, err := c.Shell(ctx, serial,
+		"cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "+pkg)
+	if err == nil {
+		if comp, ok := ParseResolveActivity(out); ok {
+			startOut, serr := c.Shell(ctx, serial, "am start -n "+comp)
+			if serr == nil && !startFailed(startOut) {
+				return nil
+			}
+		}
 	}
-	if strings.Contains(out, "No activities found") {
-		return fmt.Errorf("未找到可启动的 Activity")
+
+	// 2) 兜底：monkey。它不看组件名，对别名 / 动态注册的入口更宽容。
+	if mOut, merr := c.Shell(ctx, serial, "monkey -p "+pkg+" -c android.intent.category.LAUNCHER 1"); merr == nil {
+		if !strings.Contains(mOut, "No activities found") && !strings.Contains(mOut, "monkey aborted") {
+			return nil
+		}
 	}
-	return nil
+
+	// 3) 全失败：给出能行动的原因，而不是笼统的「未找到」。
+	//    先分清「没装」「被禁了」「装了但没入口」三种情况 —— 它们的
+	//    处理办法完全不同，混成一句话等于没说。
+	if pkgs, perr := c.Shell(ctx, serial, "pm list packages "+pkg); perr == nil && !hasPackage(pkgs, pkg) {
+		return fmt.Errorf("设备上没有安装这个应用（%s）", pkg)
+	}
+	if dis, derr := c.Shell(ctx, serial, "pm list packages -d "+pkg); derr == nil && hasPackage(dis, pkg) {
+		return fmt.Errorf("应用已被禁用，先在应用列表里启用再启动")
+	}
+	return fmt.Errorf("该应用没有可启动的入口（可能只提供文件打开/编辑的 Activity，如插件型应用）")
+}
+
+// hasPackage 判断 `pm list packages` 的输出里是否有这个包。
+//
+// 不能用 strings.Contains：`pm list packages com.foo` 是模糊过滤，
+// com.foobar 也会出现在结果里，必须逐行精确匹配 "package:<pkg>"。
+func hasPackage(out, pkg string) bool {
+	want := "package:" + pkg
+	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseResolveActivity 从 `resolve-activity --brief` 的输出里取组件名。
+//
+// 真机输出（两行，末行是答案）：
+//
+//	priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true
+//	com.android.settings/.MainSettings
+//
+// 解析不出来时回 "No activity found"。
+func ParseResolveActivity(out string) (string, bool) {
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "No activity found") {
+			return "", false
+		}
+		// 组件名形如 com.foo/.Bar 或 com.foo/com.foo.Bar，没有空格和等号。
+		if strings.Contains(line, "/") && !strings.ContainsAny(line, " =") {
+			return line, true
+		}
+	}
+	return "", false
+}
+
+// startFailed 判断 am start 的输出是否失败。
+//
+// am start 的失败不会体现在退出码上（仍然是 0），只能读文本：
+// "Error: Activity not started, unable to resolve Intent"。
+func startFailed(out string) bool {
+	low := strings.ToLower(out)
+	return strings.Contains(low, "error:") || strings.Contains(low, "unable to resolve") ||
+		strings.Contains(low, "does not exist")
 }
 
 // ClearAppData 清除应用数据。

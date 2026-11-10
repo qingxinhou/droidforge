@@ -206,6 +206,14 @@ const tweaksState = {
     immersive: false,
     captiveDisabled: true,
   },
+  // 预览权限受限的样子：把任一项改成 false 并填上 note，
+  // 页面顶部的警示条和置灰状态就会出来（真机 MIUI 上就是这个状态）。
+  caps: {
+    systemWritable: true,
+    secureWritable: true,
+    globalWritable: true,
+    note: '',
+  },
 }
 
 const batteryInfo = {

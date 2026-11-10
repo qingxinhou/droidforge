@@ -25,6 +25,10 @@ import (
 type TweaksState struct {
 	Display tweaks.Display `json:"display"`
 	SysUI   tweaks.SysUI   `json:"sysui"`
+	// Caps 说明本机的 adb shell 到底能不能写系统设置。
+	// MIUI / HyperOS 会把权限收走，界面必须据此禁用控件，
+	// 否则用户只会一次次点、一次次失败。
+	Caps tweaks.Caps `json:"caps"`
 }
 
 func (a *App) tweakExec(serial string) tweaks.Exec {
@@ -34,19 +38,26 @@ func (a *App) tweakExec(serial string) tweaks.Exec {
 	}
 }
 
-// GetTweaks 读取当前的显示与系统界面设置。
+// GetTweaks 读取当前的显示与系统界面设置，并顺带探测写入权限。
 func (a *App) GetTweaks(serial string) (*TweaksState, error) {
 	if err := a.requireAdb(); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	d, s, err := tweaks.Read(ctx, a.tweakExec(serial))
+	exec := a.tweakExec(serial)
+	d, s, err := tweaks.Read(ctx, exec)
 	if err != nil {
 		a.log("err", err.Error())
 		return nil, err
 	}
-	return &TweaksState{Display: d, SysUI: s}, nil
+	// 探测放在读取之后：即使读成功，写入权限也可能完全不在，
+	// 这正是 MIUI 上的情况（读得到、改不了）。
+	caps := tweaks.ProbeCaps(ctx, exec)
+	if caps.Note != "" {
+		a.log("warn", caps.Note)
+	}
+	return &TweaksState{Display: d, SysUI: s, Caps: caps}, nil
 }
 
 // SetResolution 设置分辨率，size 为空表示恢复默认。

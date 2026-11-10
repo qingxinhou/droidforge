@@ -42,7 +42,22 @@ export const currentDevice = computed<AdbDevice | null>(() => {
 
 export const toolsReady = computed(() => !!state.env?.tools.ready)
 
+// 后端每个绑定方法失败时都会 a.log("err", ...)，前端 run() 又 push 一次，
+// 同一条错误会在日志里出现两遍（真机日志里成对出现、每段 17 行堆栈）。
+// 这里按「同文本 + 短时间窗」去重，既保住后端那一份，也不丢前端独有的错误。
+let lastErrText = ''
+let lastErrAt = 0
+
 export function pushLog(entry: LogEntry) {
+  if (entry.level === 'err') {
+    const now = Date.now()
+    if (entry.text === lastErrText && now - lastErrAt < 1200) {
+      lastErrAt = now
+      return
+    }
+    lastErrText = entry.text
+    lastErrAt = now
+  }
   state.logs.push(entry)
   if (state.logs.length > 3000) {
     state.logs.splice(0, state.logs.length - 3000)

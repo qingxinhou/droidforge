@@ -263,9 +263,19 @@ export interface SysUIState {
   captiveDisabled: boolean
 }
 
+/** adb shell 在本机能否写入系统设置。MIUI / HyperOS 会把权限收走。 */
+export interface TweaksCaps {
+  systemWritable: boolean
+  secureWritable: boolean
+  globalWritable: boolean
+  /** 给用户看的一句话解释；全部可写时为空串 */
+  note: string
+}
+
 export interface TweaksState {
   display: DisplayState
   sysui: SysUIState
+  caps: TweaksCaps
 }
 
 // ---------------------------------------------------------------------------

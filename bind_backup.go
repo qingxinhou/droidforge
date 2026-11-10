@@ -32,8 +32,17 @@ func (a *App) ScanBackup(serial string) (*backup.Plan, error) {
 		a.log("err", "扫描失败："+err.Error())
 		return nil, err
 	}
-	a.log("ok", fmt.Sprintf("共 %d 项可备份，预估 %.1f MB",
-		plan.TotalFiles, float64(plan.TotalSize)/(1<<20)))
+	// 这里原先把 TotalFiles 当成「项数」，而文件类别的 Files 一直是 0，
+	// 于是真机日志里出现「共 1 项可备份，预估 0.2 MB」这种自相矛盾的数字。
+	// 「项」应该是类别数，文件数单独说。
+	cats := 0
+	for _, c := range plan.Categories {
+		if c.Exists {
+			cats++
+		}
+	}
+	a.log("ok", fmt.Sprintf("共 %d 项可备份（%d 个文件），预估 %.1f MB",
+		cats, plan.TotalFiles, float64(plan.TotalSize)/(1<<20)))
 	for _, c := range plan.Categories {
 		if !c.Exists && c.Note != "" {
 			a.log("warn", c.Label+"："+c.Note)

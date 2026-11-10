@@ -1,0 +1,12 @@
+Exception occurred while executing 'put':
+java.lang.SecurityException: Permission denial: writing to settings requires:android.permission.WRITE_SECURE_SETTINGS
+	at com.android.providers.settings.SettingsProvider.enforceWritePermission(SettingsProvider.java:2331)
+	at com.android.providers.settings.SettingsProvider.mutateSecureSetting(SettingsProvider.java:1768)
+	at com.android.providers.settings.SettingsProvider.insertSecureSetting(SettingsProvider.java:1719)
+	at com.android.providers.settings.SettingsProvider.call(SettingsProvider.java:467)
+	at android.content.ContentProvider.call(ContentProvider.java:2533)
+	at com.android.providers.settings.SettingsService$MyShellCommand.putForUser(SettingsService.java:382)
+	at com.android.providers.settings.SettingsService$MyShellCommand.onCommand(SettingsService.java:278)
+	at android.os.ShellCommand.exec(ShellCommand.java:38)
+	at android.os.Binder.onTransact(Binder.java:882)
+	at android.os.Binder.execTransactInternal(Binder.java:1290)

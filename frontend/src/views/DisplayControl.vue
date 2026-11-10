@@ -2,13 +2,20 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   Monitor, Maximize2, Type, Timer, Keyboard, Camera, RotateCcw,
-  ArrowLeft, Circle, Square, Power, Volume2, Volume1, Play, Pause, Music,
+  ArrowLeft, Circle, Square, Power, Volume2, Volume1, Play, Pause, Music, ShieldAlert,
 } from 'lucide-vue-next'
 import { api } from '../api'
 import { state, toast, needAdb, run } from '../store'
-import type { DisplayState } from '../types'
+import type { DisplayState, TweaksCaps } from '../types'
 
 const d = ref<DisplayState | null>(null)
+const caps = ref<TweaksCaps | null>(null)
+
+// 字体缩放 / 锁屏写 system，动画倍率写 global，两个权限是分开的。
+// 分辨率与密度走的是 wm 命令，不受这里的设置权限影响，不置灰。
+const canSystem = computed(() => (caps.value ? caps.value.systemWritable : true))
+const canGlobal = computed(() => (caps.value ? caps.value.globalWritable : true))
+const blocked = computed(() => !!caps.value && (!caps.value.systemWritable || !caps.value.globalWritable))
 const size = ref('')
 const density = ref<number | null>(null)
 const fontScale = ref(1)
@@ -55,6 +62,7 @@ async function load() {
   try {
     const t = await api.getTweaks(state.serial)
     d.value = t.display
+    caps.value = t.caps
     fontScale.value = t.display.fontScale || 1
     timeoutMs.value = nearestTimeout(t.display.screenTimeoutMs)
     anim.value = {
@@ -104,6 +112,10 @@ async function applyDensity() {
 
 async function applyFont() {
   if (!needAdb()) return
+  if (!canSystem.value) {
+    toast('warn', '本机禁止 adb shell 写系统设置，字体缩放改不了')
+    return
+  }
   await run(`字体缩放 ${fontScale.value.toFixed(2)}x`, () =>
     api.setFontScale(state.serial, fontScale.value),
   )
@@ -112,6 +124,10 @@ async function applyFont() {
 
 async function applyAnim() {
   if (!needAdb()) return
+  if (!canGlobal.value) {
+    toast('warn', '本机禁止 adb shell 写系统设置，动画倍率改不了')
+    return
+  }
   await run('动画倍率已应用', () =>
     api.setAnimationScales(state.serial, anim.value.window, anim.value.transition, anim.value.animator),
   )
@@ -132,18 +148,29 @@ async function resetAnim() {
 
 async function applyTimeout() {
   if (!needAdb()) return
+  if (!canSystem.value) {
+    toast('warn', '本机禁止 adb shell 写系统设置，锁屏时间改不了')
+    return
+  }
   await run('锁屏时间已更新', () => api.setScreenTimeout(state.serial, timeoutMs.value))
   await load()
 }
 
 async function resetAll() {
   if (!needAdb()) return
-  await run('已恢复显示默认值', async () => {
+  // 一组里既有 wm（本机可用）也有 settings（可能被 ROM 拒），
+  // 只执行本机确实能写的那几项，别让一个拒绝把整批恢复打断。
+  const sys = canSystem.value
+  const glob = canGlobal.value
+  const label = sys && glob ? '已恢复显示默认值' : '已恢复分辨率与密度（系统设置被本机限制）'
+  await run(label, async () => {
     await api.setResolution(state.serial, '')
     await api.setDensity(state.serial, 0)
-    await api.setFontScale(state.serial, 1)
-    await api.setScreenTimeout(state.serial, 30000)
-    await api.setAnimationScales(state.serial, 1, 1, 1)
+    if (sys) {
+      await api.setFontScale(state.serial, 1)
+      await api.setScreenTimeout(state.serial, 30000)
+    }
+    if (glob) await api.setAnimationScales(state.serial, 1, 1, 1)
   })
   await load()
 }
@@ -182,6 +209,19 @@ onMounted(() => void load())
       <div class="flex gap-2">
         <button class="btn" :disabled="!d" @click="load"><RotateCcw class="h-3.5 w-3.5" /> 重新读取</button>
         <button class="btn btn-danger" @click="resetAll">恢复显示默认值</button>
+      </div>
+    </div>
+
+    <!-- 权限警示：字体 / 动画 / 锁屏都靠 settings put，被 ROM 拒绝时只会静默失败 -->
+    <div v-if="blocked" class="panel mb-4 border-warn/30 bg-warn/[0.05] p-3">
+      <div class="flex items-start gap-2">
+        <ShieldAlert class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
+        <div>
+          <p class="text-[11.5px] leading-relaxed text-slate-200">{{ caps?.note }}</p>
+          <p class="mt-1 text-[10.5px] leading-relaxed text-muted">
+            字体、动画、锁屏三项写入系统设置，本机会失败；分辨率与密度走 <code class="rounded bg-ink-800 px-1">wm</code> 命令，不受影响。
+          </p>
+        </div>
       </div>
     </div>
 
@@ -227,7 +267,7 @@ onMounted(() => void load())
             <button class="btn btn-icon" @click="fontScale = Math.max(0.5, +(fontScale - 0.05).toFixed(2))">−</button>
             <input v-model.number="fontScale" type="number" step="0.05" min="0.5" max="2" class="input mono w-24 text-center" />
             <button class="btn btn-icon" @click="fontScale = Math.min(2, +(fontScale + 0.05).toFixed(2))">＋</button>
-            <button class="btn btn-primary ml-auto" @click="applyFont">应用</button>
+            <button class="btn btn-primary ml-auto disabled:cursor-not-allowed disabled:opacity-40" :disabled="!canSystem" @click="applyFont">应用</button>
           </div>
           <div class="mb-4 text-[10px] text-muted">当前：{{ d?.fontScale ?? '—' }}x</div>
 
@@ -247,9 +287,9 @@ onMounted(() => void load())
             </div>
           </div>
           <div class="mt-2 flex gap-2">
-            <button class="btn flex-1" @click="killAnim">关闭动画（0×）</button>
-            <button class="btn flex-1" @click="resetAnim">恢复 1×</button>
-            <button class="btn btn-primary" :class="dirty ? '' : 'opacity-50'" @click="applyAnim">应用</button>
+            <button class="btn flex-1 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!canGlobal" @click="killAnim">关闭动画（0×）</button>
+            <button class="btn flex-1 disabled:cursor-not-allowed disabled:opacity-40" :disabled="!canGlobal" @click="resetAnim">恢复 1×</button>
+            <button class="btn btn-primary disabled:cursor-not-allowed" :class="dirty && canGlobal ? '' : 'opacity-50'" :disabled="!canGlobal" @click="applyAnim">应用</button>
           </div>
         </div>
       </div>
@@ -271,7 +311,7 @@ onMounted(() => void load())
           </div>
           <div class="mt-3 flex items-center justify-between">
             <span class="text-[10px] text-muted">当前生效：{{ d?.screenTimeoutMs ? d.screenTimeoutMs / 1000 + ' 秒' : '—' }}</span>
-            <button class="btn btn-primary" @click="applyTimeout">应用</button>
+            <button class="btn btn-primary disabled:cursor-not-allowed disabled:opacity-40" :disabled="!canSystem" @click="applyTimeout">应用</button>
           </div>
         </div>
       </div>

@@ -234,9 +234,10 @@ func run(ctx context.Context, exec Exec, cmd string) error {
 	if err != nil {
 		return err
 	}
-	low := strings.ToLower(out)
-	if strings.Contains(low, "exception") || strings.Contains(low, "error:") || strings.Contains(low, "unknown command") {
-		return fmt.Errorf("%s", strings.TrimSpace(out))
+	// 折叠成一行：settings 被拒时会吐 17 行 Java 堆栈，
+	// 整段抛到界面上既占满提示框，也把真正的原因埋掉了。
+	if msg := failureMessage(out); msg != "" {
+		return fmt.Errorf("%s", msg)
 	}
 	return nil
 }

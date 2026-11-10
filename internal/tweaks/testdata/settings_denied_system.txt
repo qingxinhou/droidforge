@@ -1,0 +1,4 @@
+Exception occurred while executing 'put':
+java.lang.SecurityException: com.android.shell was not granted  this permission: android.permission.WRITE_SETTINGS.
+	at com.android.providers.settings.SettingsProvider.enforceWritePermission(SettingsProvider.java:2331)
+	at android.os.Binder.onTransact(Binder.java:882)

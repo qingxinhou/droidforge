@@ -70,6 +70,17 @@ var categories = []Category{
 	},
 }
 
+// fileCategories 返回按文件扫描的类别，顺序即 scanScript 里计数段的顺序。
+func fileCategories() []Category {
+	out := make([]Category, 0, len(categories))
+	for _, c := range categories {
+		if c.Kind == "files" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Categories 返回可备份类别。
 func Categories() []Category { return categories }
 
@@ -92,6 +103,7 @@ type Plan struct {
 
 const markerContacts = "@@@CONTACTS"
 const markerSMS = "@@@SMS"
+const markerCounts = "@@@COUNTS"
 const markerEnd = "@@@END"
 
 // scanScript 用一次 adb 往返拿到所有类别的大小与数量。
@@ -109,10 +121,24 @@ func scanScript() string {
 		}
 		sb.WriteString(" 2>/dev/null\n")
 	}
+	// 文件数单独一段：du 只给容量、不给个数，而界面要显示「N 项」。
+	// find 的路径必须写在表达式前面（find <paths...> -type f），
+	// 顺序与 fileCategories() 完全一致，解析时按下标对应。
+	sb.WriteString("echo " + markerCounts + "\n")
+	for _, c := range fileCategories() {
+		sb.WriteString("find")
+		for _, p := range c.Paths {
+			sb.WriteString(" '" + p + "'")
+		}
+		sb.WriteString(" -type f 2>/dev/null | wc -l\n")
+	}
+	// 只数 "Row:" 开头的行：`content query` 查不到东西时会往 **stdout**
+	// 打一句 "No result found."，用 wc -l 数行会把这句话当成 1 条记录
+	// （真机上就因此报过「1 条短信」，实际是 0 条）。
 	sb.WriteString("echo " + markerContacts + "\n")
-	sb.WriteString("content query --uri content://com.android.contacts/raw_contacts --projection _id 2>/dev/null | wc -l\n")
+	sb.WriteString("content query --uri content://com.android.contacts/raw_contacts --projection _id 2>/dev/null | grep -c '^Row:'\n")
 	sb.WriteString("echo " + markerSMS + "\n")
-	sb.WriteString("content query --uri content://sms --projection _id 2>/dev/null | wc -l\n")
+	sb.WriteString("content query --uri content://sms --projection _id 2>/dev/null | grep -c '^Row:'\n")
 	sb.WriteString("echo " + markerEnd + "\n")
 	return sb.String()
 }
@@ -123,13 +149,21 @@ func Scan(ctx context.Context, bin, serial string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseScan(out, serial), nil
+}
 
+// parseScan 把扫描脚本的输出解析成 Plan。拆成纯函数才能用真机输出做回归。
+func parseScan(out, serial string) *Plan {
 	sizes := map[string]int64{}
+	var counts []int
 	contacts, sms := 0, 0
 	section := "du"
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		switch line {
+		case markerCounts:
+			section = "counts"
+			continue
 		case markerContacts:
 			section = "contacts"
 			continue
@@ -154,10 +188,20 @@ func Scan(ctx context.Context, bin, serial string) (*Plan, error) {
 				continue
 			}
 			sizes[strings.TrimSpace(parts[1])] = kb * 1024
+		case "counts":
+			counts = append(counts, atoiSafe(line))
 		case "contacts":
 			contacts = atoiSafe(line)
 		case "sms":
 			sms = atoiSafe(line)
+		}
+	}
+
+	// 计数按 fileCategories() 的下标对应，缺项就留 0（不猜）。
+	fileCounts := map[string]int{}
+	for i, c := range fileCategories() {
+		if i < len(counts) {
+			fileCounts[c.ID] = counts[i]
 		}
 	}
 
@@ -166,6 +210,7 @@ func Scan(ctx context.Context, bin, serial string) (*Plan, error) {
 		cp := CategoryPlan{Category: c}
 		switch c.Kind {
 		case "files":
+			cp.Files = fileCounts[c.ID]
 			for _, p := range c.Paths {
 				if sz, ok := sizes[p]; ok {
 					cp.Size += sz
@@ -194,7 +239,7 @@ func Scan(ctx context.Context, bin, serial string) (*Plan, error) {
 		plan.TotalSize += cp.Size
 		plan.TotalFiles += cp.Files
 	}
-	return plan, nil
+	return plan
 }
 
 // Options 是备份参数。

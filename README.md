@@ -268,6 +268,10 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 - **合成结果不保证适配机型**：分区名、槽位与组容量必须与目标设备一致，工具只保证 metadata 结构合法。
 - **Magisk 分支的补丁脚本存在版本差异**：若自动下载的版本补丁失败，可在 Root 页指定本地 APK。
 - **系统调校依赖 ROM**：分辨率 / 密度 / 状态栏图标等写入的是系统设置，部分厂商 ROM 会拒绝或覆盖，属正常现象。
+  **MIUI / HyperOS 会把 `WRITE_SETTINGS` / `WRITE_SECURE_SETTINGS` 从 shell 角色上收回**，
+  三个 settings 命名空间全部写不了（实测 Redmi K60 至尊版 / Android 13 每条 `settings put` 都抛
+  `SecurityException`）。本工具会先探测写权限并在界面上禁用相应控件、给出说明，不会让用户白点；
+  这类 ROM 上要改系统设置只能 root 后操作。
 - **电池模拟只改上报值**：不改变真实电量，重启或拔插电源后一般会恢复，建议用完点「恢复」。
 - **CPU 频率依赖内核节点**：部分设备不开放 `cpufreq`，此时性能页无法读数。
 - **分区容量在系统内普遍读不到**：Android 10+ 把 `/proc/partitions`、`/sys/class/block/*/size`、
@@ -289,6 +293,7 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 - **备份不含应用数据**：`/sdcard/Android/data` 在 Android 11 以上普遍不可读，应用私有数据不在备份范围内。
 - **通讯录 / 短信导出需要 root**：Android 11+ 收紧了 provider 权限，`adb shell` 访问 `content://com.android.contacts`
   会直接抛 `SecurityException`（缺 `READ_CONTACTS`）。这是系统限制，工具不会绕过；无 root 时该类别会显示为不可用。
+  同理，`content query` 查不到记录时会在 stdout 打一句 `No result found.`，计数只认 `Row:` 行，不会把这句话当成 1 条记录。
 - **分区容量多半读不到**：Android 10+ 起 `shell` 用户读 `/proc/partitions`、`/sys/class/block/*/size` 与
   `blockdev` 全部被 SELinux 拒绝。工具会用 `df` 补上已挂载分区的容量，其余如实标为未知，不猜也不填 0。
 - **实时电流需要 root**：`/sys/class/power_supply/*/current_now` 同样被拒，此时电池页显示——而不是 0 mA，

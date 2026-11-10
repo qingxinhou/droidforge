@@ -3,6 +3,48 @@
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.8.4] - 2026-11-10
+
+把一份真机运行日志逐条核对了一遍。问题集中在「界面上看不出来但操作已经失败」这类
+静默失效：按钮能点、提示是绿的，实际上什么都没改成。
+
+### 修复：MIUI / HyperOS 上系统调校整页白点
+
+`settings put` 在这些 ROM 上被 `SecurityException` 拒绝（shell 角色被收回了
+`WRITE_SETTINGS` / `WRITE_SECURE_SETTINGS`），但旧界面按钮照常可点，用户只能一次次
+点、一次次看 Java 堆栈。现在进页面就探测三个 settings 命名空间的写权限：
+
+- 权限不在时禁用对应控件、顶部横幅说明原因（root 才能改），不再让按钮假活；
+- 沉浸模式 / Wi-Fi 检测写 global，其余写 secure，分别拦截；
+- `resetAll` 按权限拆分执行，只重置改得了的项；
+- `settings` 被拒时吐出的 17 行堆栈折叠成一句话，不再刷屏。
+
+### 修复：启动应用失败时给不出能行动的原因
+
+旧实现只有「未找到可启动的 Activity」一句。但真机上至少三种情况都会走到这里，
+处理办法完全不同：没装、被 `disable-user` 禁用了、装了但没有 MAIN/LAUNCHER 入口
+（WPS lite 这类插件包）。现在按「resolve-activity 解析组件 → am start → monkey 兜底
+→ 精确报错」走，三种情况分开报。另外 `pm list packages` 是模糊过滤，包名匹配改为
+逐行精确比较，不再把 `com.foobar` 当成 `com.foo` 装了。
+
+### 修复：备份助手的三处假数
+
+- **「共 1 项」永远是 1**：`TotalFiles` 被当成项数用，而文件类别的 `Files` 恒 0。
+  扫描脚本加了 `@@@COUNTS` 段（`find <paths> -type f | wc -l`），现在显示
+  「N 项可备份（M 个文件）」。
+- **短信 0 条报成 1 条**：`content query` 查不到时往 stdout 打 `No result found.`，
+  `wc -l` 把这句话也算了一行。改为 `grep -c '^Row:'`，只数真正的记录行。
+- **解析逻辑不可测**：`parseScan` 从 `Scan` 里拆成纯函数，用真机输出做回归。
+
+### 修复：同一条错误在日志里出现两遍
+
+后端绑定方法失败时 `a.log("err", ...)` 记一份，前端 `run()` 又 push 一份，
+真机日志里成对出现、每段 17 行堆栈。前端按「同文本 + 1.2 秒窗口」去重。
+
+### 新增
+
+- `tools/logcheck`：只读验证工具，跑一遍探测确认上述修复在真机上生效。
+
 ## [1.8.3] - 2026-11-10
 
 接真机把 fastboot 链路走了一遍，包括进 bootloader 和 fastbootd。挖出的问题集中在
