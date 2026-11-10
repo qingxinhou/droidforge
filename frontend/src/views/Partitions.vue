@@ -68,6 +68,14 @@ onMounted(() => {
         <p class="mt-1 text-[11.5px] text-muted">
           查看设备分区表与块设备映射。导出分区镜像需要设备已 root。
         </p>
+        <!--
+          无 root 时系统内读不到块设备容量（Android 10+ 封了 /proc/partitions 与 sysfs），
+          只能给出去 fastbootd 取的路子，别让「—」看起来像程序坏了。
+        -->
+        <p v-if="state.mode === 'adb' && list.length && knownCount < list.length" class="mt-1 text-[11px] text-muted">
+          有 {{ list.length - knownCount }} 个分区容量未知 —— Android 10+ 在系统内禁止读取块设备容量。
+          把设备重启到 fastbootd 后可读取全部真实容量。
+        </p>
       </div>
       <div class="flex items-center gap-2">
         <div class="relative">
