@@ -14,3 +14,8 @@
 # Windows 批处理需要 CRLF 才能正常执行
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# 测试夹具必须逐字节保留：这些文件是 Windows 版 fastboot 的真实输出，
+# 里面的 CRLF 正是被测对象（解析器必须能吃掉 \r）。
+# 一旦被 text=auto 转成 LF，回归测试就失去意义了。
+internal/fastboot/testdata/* -text

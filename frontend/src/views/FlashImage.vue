@@ -13,6 +13,8 @@ const partition = ref('boot')
 const slot = ref('')
 const bootInfo = ref<BootImageInfo | null>(null)
 const devicePartitions = ref<string[]>([])
+/** 分区列表来源：adb（系统内）/ bootloader（内核态 fastboot）/ fastbootd（用户态） */
+const partitionSource = ref<'adb' | 'bootloader' | 'fastbootd' | ''>('')
 
 const commonPartitions = [
   'boot', 'init_boot', 'vendor_boot', 'recovery', 'dtbo', 'vbmeta', 'vbmeta_system',
@@ -27,7 +29,12 @@ const partitionOptions = computed(() => {
   return Array.from(set)
 })
 
+/** 分区名本身已带槽位（bootloader 读取到的都是 boot_a / boot_b） */
+const hasSlotSuffix = computed(() => /_[ab]$/.test(partition.value))
+
 const finalPartition = computed(() => {
+  // 名字里已经有槽位时不能再叠一次，否则会刷成 boot_a_a 这种不存在分区
+  if (hasSlotSuffix.value) return partition.value
   if (!slot.value) return partition.value
   return `${partition.value}_${slot.value}`
 })
@@ -51,15 +58,33 @@ async function pickImage() {
   }
 }
 
+/**
+ * 读取目标设备的分区名。
+ *
+ * 关键分叉：刷 boot 本来就是进 fastboot 做的事，而 fastboot 模式下 adb 完全
+ * 不可见（`adb devices` 为空），走 GetPartitions 必然失败、下拉框空着，
+ * 用户连着设备却选不出分区。所以这里按当前模式选数据源。
+ */
 async function loadDevicePartitions() {
-  if (state.mode !== 'adb') {
-    toast('warn', '读取分区表需要设备处于 ADB 模式')
+  if (!state.serial) {
+    toast('warn', '请先选择设备')
     return
   }
   try {
-    const list = await api.getPartitions(state.serial)
+    const list =
+      state.mode === 'fastboot'
+        ? await api.fastbootPartitions(state.serial)
+        : await api.getPartitions(state.serial)
     devicePartitions.value = list.map((p) => p.name)
-    toast('ok', `读取到 ${list.length} 个分区`)
+    if (state.mode === 'fastboot') {
+      // fastbootd 看到的是 super 里的逻辑分区，bootloader 只有物理分区
+      const logical = list.length > 0 && list[0].kind === 'logical'
+      partitionSource.value = logical ? 'fastbootd' : 'bootloader'
+      toast('ok', `从 ${logical ? 'fastbootd' : 'bootloader'} 读取到 ${list.length} 个分区`)
+    } else {
+      partitionSource.value = 'adb'
+      toast('ok', `读取到 ${list.length} 个分区`)
+    }
   } catch (e: any) {
     toast('err', e?.message ?? String(e))
   }
@@ -112,6 +137,16 @@ async function consumePending() {
 
 onMounted(consumePending)
 watch(() => state.pendingImage, consumePending)
+// 设备接入、或从系统重启进 fastboot（反之亦然）时，分区来源会变，得重读。
+// immediate 覆盖「进页面时设备已经连着」的情况，不必再单独在 onMounted 里读一次。
+watch(
+  () => [state.serial, state.mode] as const,
+  () => {
+    if (state.serial) void loadDevicePartitions()
+    else devicePartitions.value = []
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -165,7 +200,18 @@ watch(() => state.pendingImage, consumePending)
         <div class="panel">
           <div class="panel-head">
             <span class="panel-title">2 · 目标分区</span>
-            <button class="btn btn-sm" @click="loadDevicePartitions">读取设备分区表</button>
+            <div class="flex items-center gap-2">
+              <span v-if="partitionSource" class="tag">
+                {{
+                  partitionSource === 'adb'
+                    ? '来自 ADB'
+                    : partitionSource === 'fastbootd'
+                      ? '来自 fastbootd'
+                      : '来自 bootloader'
+                }}
+              </span>
+              <button class="btn btn-sm" @click="loadDevicePartitions">读取设备分区表</button>
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-3 p-4">
             <div>
@@ -182,9 +228,13 @@ watch(() => state.pendingImage, consumePending)
                   :key="s"
                   class="btn flex-1"
                   :class="slot === s ? 'btn-primary' : ''"
+                  :disabled="hasSlotSuffix"
                   @click="slot = s"
                 >{{ s === '' ? '自动' : s.toUpperCase() }}</button>
               </div>
+              <p v-if="hasSlotSuffix" class="mt-1 text-[11px] text-muted">
+                分区名已含槽位，此项不生效
+              </p>
             </div>
             <div class="col-span-2 rounded border border-ink-700 bg-ink-900 px-3 py-2">
               <span class="text-[11px] text-muted">最终刷入：</span>

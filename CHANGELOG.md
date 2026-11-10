@@ -3,6 +3,59 @@
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.8.3] - 2026-11-10
+
+接真机把 fastboot 链路走了一遍，包括进 bootloader 和 fastbootd。挖出的问题集中在
+「模式切换后整个页面不可用」这类只在真机上出现的事。
+
+### 修复：设备在 fastboot 时刷机页分区下拉是空的
+
+刷 `boot` 本来就是进 fastboot 做的事，但 fastboot 模式下 `adb devices` 为空，
+刷机页和分区页却都只走 `GetPartitions`（纯 adb 实现）——**用户连着设备，却选不出
+目标分区，整个功能等于不可用**。
+
+- 新增 `FastbootPartitions(serial)` / `FastbootVars(serial)`，从 `fastboot getvar all`
+  还原分区表；刷机页与分区页按当前模式自动切换数据源，并标注「来自 bootloader /
+  来自 fastbootd / 来自 ADB」。
+- 进页面即自动读取，设备从系统重启进 fastboot（或反之）时自动重读。
+
+### 修复：GetVar 的三处解析问题
+
+- **冒号后无空格时值被丢弃**：bootloader 给 `partition-size:boot_a: 4000000`，
+  fastbootd 给 `partition-size:boot_a:0x4000000`。旧解析优先找 `": "`，找不到就
+  回退并把值置空——真机在 fastbootd 下因此解析出 **0 个分区**。改为按最后一个冒号
+  切分并 trim。
+- **容量前缀不一致**：bootloader 是裸十六进制（`73ff7f8000`），fastbootd 带 `0x`
+  （`0x73FF7F8000`），两种都认。
+- **静默失败**：`getvar` 一个不存在的变量时，bootloader 是「键回显、值为空、退出码 0」，
+  fastbootd 是 `FAILED (remote: 'Could not open partition')`——两种退出码都是 0。
+  现在前者返回空值（语义就是「设备没给」），后者返回带原因的错误。
+
+### 修复：刷入失败的错误信息
+
+旧实现把 `fastboot flash` 的整段输出（含 `Sending...`、`Warning: skip copying...`）
+塞进 error，UI 上真正的失败原因被埋在中间。现在只提取 `FAILED` 那句。
+
+### 修复：槽位叠加
+
+分区名已带 `_a` / `_b`（bootloader 返回的名字都带后缀）时再选槽位会拼成 `boot_a_a`，
+刷入必失败。现在检测到后缀就禁用槽位选择并说明原因。
+
+### 新增：从 fastbootd 读全量分区容量
+
+Android 10+ 在系统内封死了块设备容量的所有读法（`/proc/partitions`、sysfs、
+`blockdev`），无 root 时分区页大量显示「—」。fastbootd 的 `getvar all` 一次能给出
+全部分区的真实容量（真机实测 108 个，含 `super` 内的 `system_a` / `vendor_a` 等），
+并用 `is-logical` 逐分区标注逻辑/物理。分区页在 fastbootd 下直接可用。
+
+### 其他
+
+- 新增 `internal/fastboot` 测试 10 项，其中 4 项直接跑真机抓下来的原始输出
+  （`testdata/getvar_all_bootloader.txt`、`getvar_all_fastbootd.txt`、`flash_failed.txt`）。
+- 真机确认：非活动槽位的逻辑分区容量确实报 `0x0`（不是读不到），按「真实为 0」处理；
+  `sda` / `sdb` 只有 `partition-type` 没有容量，记为 -1。
+- 新增 `tools/fbcheck`：在真机 fastboot 模式下自检 fastboot 包。
+
 ## [1.8.2] - 2026-11-10
 
 第一次接真机跑（Redmi K60 至尊版 / Android 13 / MT6896 / A-B 槽位 / BL 已解锁）。

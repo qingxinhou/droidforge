@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"droidforge/internal/device"
+	"droidforge/internal/fastboot"
 	"droidforge/internal/rom"
 )
 
@@ -22,6 +24,53 @@ func (a *App) FastbootDevices() ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return a.fbClient().Devices(ctx)
+}
+
+// FastbootPartitions 在 bootloader 模式下读取分区表。
+//
+// 刷 boot/vbmeta 这类操作本来就要在 fastboot 里做，而此时 adb 完全不可见
+// （`adb devices` 为空），GetPartitions 必然失败——刷机页的分区下拉会是空的，
+// 用户明明连着设备却选不出目标分区。这里改从 `fastboot getvar all` 取。
+func (a *App) FastbootPartitions(serial string) ([]device.Partition, error) {
+	if err := a.requireFastboot(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	list, err := a.fbClient().Partitions(ctx, serial)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]device.Partition, 0, len(list))
+	for _, p := range list {
+		kind := device.KindPhysical
+		if p.Kind == fastboot.KindLogical {
+			kind = device.KindLogical
+		}
+		out = append(out, device.Partition{
+			Name:      p.Name,
+			SizeBytes: p.SizeBytes,
+			Slot:      p.Slot,
+			FSType:    p.FSType,
+			Kind:      kind,
+		})
+	}
+	mode := "bootloader"
+	if len(list) > 0 && list[0].Kind == fastboot.KindLogical {
+		mode = "fastbootd"
+	}
+	a.log("ok", fmt.Sprintf("从 %s 读取到 %d 个分区", mode, len(out)))
+	return out, nil
+}
+
+// FastbootVars 读取全部 fastboot 变量，供设备页展示。
+func (a *App) FastbootVars(serial string) (map[string]string, error) {
+	if err := a.requireFastboot(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return a.fbClient().Vars(ctx, serial)
 }
 
 // FastbootReboot 通过 fastboot 重启。

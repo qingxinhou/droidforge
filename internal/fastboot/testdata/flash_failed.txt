@@ -1,0 +1,4 @@
+Warning: skip copying definitely_not_a_partition image avb footer (definitely_not_a_partition partition size: 0, definitely_not_a_partition image size: 1048576).
+Sending 'definitely_not_a_partition' (1024 KB)     OKAY [  0.032s]
+Writing 'definitely_not_a_partition'               FAILED (remote: 'partition does not exist')
+fastboot: error: Command failed

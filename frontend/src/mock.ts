@@ -108,6 +108,21 @@ const partitions = [
   { name: 'persist', block: '/dev/block/sda3', sizeBytes: 33_554_432, slot: '', dynamic: false, mountPoint: '/mnt/vendor/persist', fsType: 'ext4' },
 ]
 
+// bootloader 视角的分区表：真机（rembrandt）getvar all 的实测值。
+// 只有物理分区，没有挂载点；容量是 fastboot 报的向上取整值。
+const fastbootPartitions = [
+  { name: 'boot_a', block: '', sizeBytes: 67_108_864, slot: 'a', dynamic: false, mountPoint: '', fsType: '' },
+  { name: 'boot_b', block: '', sizeBytes: 67_108_864, slot: 'b', dynamic: false, mountPoint: '', fsType: '' },
+  { name: 'dtbo_a', block: '', sizeBytes: 33_554_432, slot: 'a', dynamic: false, mountPoint: '', fsType: '' },
+  { name: 'dtbo_b', block: '', sizeBytes: 33_554_432, slot: 'b', dynamic: false, mountPoint: '', fsType: '' },
+  { name: 'lk_a', block: '', sizeBytes: 8_388_608, slot: 'a', dynamic: false, mountPoint: '', fsType: '' },
+  { name: 'md1img_a', block: '', sizeBytes: 209_715_200, slot: 'a', dynamic: false, mountPoint: '', fsType: '' },
+  { name: 'super', block: '', sizeBytes: 9_126_805_504, slot: '', dynamic: true, mountPoint: '', fsType: '' },
+  { name: 'userdata', block: '', sizeBytes: 498_207_784_960, slot: '', dynamic: false, mountPoint: '', fsType: 'f2fs' },
+  { name: 'vbmeta_a', block: '', sizeBytes: 8_388_608, slot: 'a', dynamic: false, mountPoint: '', fsType: '' },
+  { name: 'vendor_boot_a', block: '', sizeBytes: 67_108_864, slot: 'a', dynamic: false, mountPoint: '', fsType: '' },
+]
+
 const cpuSnapshot = {
   cores: [
     { index: 0, cur: 1_900_000, min: 364_000, max: 2_189_000, governor: 'walt', freqs: null },
@@ -231,6 +246,15 @@ const handlers: Record<string, (...args: any[]) => any> = {
   RefreshDevices: () => environment,
   GetDeviceInfo: () => deviceInfo,
   GetPartitions: () => partitions,
+  // bootloader 视角：没有挂载点/文件系统，容量来自 getvar 的裸十六进制
+  FastbootPartitions: () => fastbootPartitions,
+  FastbootVars: () => ({
+    product: 'rembrandt',
+    'current-slot': 'a',
+    'is-userspace': 'no',
+    'max-download-size': '0x10000000',
+    unlocked: 'yes',
+  }),
   GetConfig: () => config,
   SaveConfig: () => undefined,
   // 预览免责协议门：dev 下每次启动都会弹，点同意后本次会话不再出现

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RefreshCw, Search, Download, HardDrive, Layers } from 'lucide-vue-next'
 import { api } from '../api'
-import { state, toast, fmtBytes, needAdb, run } from '../store'
+import { state, toast, fmtBytes, run } from '../store'
 import type { Partition } from '../types'
 
 const list = ref<Partition[]>([])
@@ -24,10 +24,17 @@ const totalSize = computed(() =>
 const knownCount = computed(() => list.value.filter((p) => p.sizeBytes > 0).length)
 
 async function load() {
-  if (!needAdb()) return
+  if (!state.serial) {
+    toast('warn', '请先选择设备')
+    return
+  }
   loading.value = true
   try {
-    list.value = await api.getPartitions(state.serial)
+    // fastboot 模式下 adb 不可见，只能问 bootloader 要分区表（且只有物理分区）
+    list.value =
+      state.mode === 'fastboot'
+        ? await api.fastbootPartitions(state.serial)
+        : await api.getPartitions(state.serial)
     toast('ok', `读取到 ${list.value.length} 个分区`)
   } catch (e: any) {
     toast('err', e?.message ?? String(e))
@@ -37,6 +44,10 @@ async function load() {
 }
 
 async function backup(p: Partition) {
+  if (state.mode !== 'adb') {
+    toast('warn', '导出分区镜像需要设备进入系统并已 root')
+    return
+  }
   const out = await run('', () => api.extractBoot(state.serial, p.name, ''))
   if (out) {
     toast('ok', `已导出 ${p.name}`)

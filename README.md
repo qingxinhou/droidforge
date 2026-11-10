@@ -22,7 +22,7 @@ Windows / macOS / Linux 通用，单文件可执行，**所有命令都在本机
 | **设备管理** | USB / 无线设备自动发现、一键切换 ADB / Fastboot、设备信息总览（型号、SoC、内核、槽位、动态分区、BL 状态、Root 方案） |
 | **ADB 终端** | 内置 Shell，支持命令历史（↑↓）、快捷命令、输出复制，等同于 `adb -s <serial> shell` |
 | **重启控制** | 系统 / Recovery / Bootloader / fastbootd / EDL(9008) / Sideload / 关机 |
-| **刷入镜像** | 单分区刷入，自动识别 boot / init_boot / vendor_boot，A/B 槽位选择，sparse → raw 转换 |
+| **刷入镜像** | 单分区刷入，自动识别 boot / init_boot / vendor_boot，A/B 槽位选择，sparse → raw 转换。设备在 bootloader / fastbootd 时自动改从 `fastboot getvar all` 读分区表（此时 `adb` 完全不可见） |
 | **线刷整包** | 扫描镜像目录自动生成刷机顺序，动态分区自动切 fastbootd，支持按分区勾选 |
 | **刷机包提取** | OTA zip（payload.bin）、小米 tgz、三星 tar.md5、镜像文件夹；按分区按需提取，无需解压整包 |
 | **超级分区** | 解析 `super.img` 的 `lp_metadata`，列出全部逻辑分区并按需导出；把散包分区按 `super_def` 分组合成 `super.img`（含双槽位 metadata 与备份） |
@@ -34,7 +34,7 @@ Windows / macOS / Linux 通用，单文件可执行，**所有命令都在本机
 | **一键 Root** | KernelSU / KernelSU Next / Magisk 官方 / Magisk Alpha（阿尔法面具）/ Magisk Delta（德尔塔面具）/ APatch |
 | **模块管理** | 批量安装 Magisk / KernelSU / APatch 模块：解析 `module.prop`、自动识别 root 方案并选择对应安装命令、逐个推送安装并清理临时文件 |
 | **EDL 9008** | Sahara 握手 + Firehose 会话：加载 loader、读 GPT 分区表（多 LUN）、按分区读取 / 写入 / 擦除、发送重启。传输层为 Windows WinUSB（SetupAPI + `winusb.dll`，无 cgo） |
-| **分区管理** | 分区表查看、块设备映射、容量、挂载点，导出分区镜像 |
+| **分区管理** | 分区表查看、块设备映射、容量、挂载点，导出分区镜像。**无 root 时容量普遍读不到**（Android 10+ 封了 `/proc/partitions` 与 sysfs），进 fastbootd 可一次拿到全部分区的真实容量 |
 | **投屏** | 调用本机 scrcpy 开独立窗口，可调码率 / 长边 / 帧率，支持关屏投屏、常亮、静音转发、窗口置顶与同时录制 |
 | **备份助手** | 照片、文档、音乐按类别用 `tar` 流批量拉取（比逐个 `adb pull` 快一个量级，设备端 base64 编码后传输），通讯录与短信导出为带 BOM 的 CSV；已存在且大小一致的文件自动跳过。**通讯录 / 短信在 Android 11+ 上被 provider 权限拦住，无 root 时会明确提示不可用** |
 | **应用管理** | 启用 / 禁用、运行、强行停止、清除数据、保留数据卸载、恢复系统应用、提取安装包（含 split）、Google 套件批量管理、操作记录 |
@@ -270,6 +270,15 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 - **系统调校依赖 ROM**：分辨率 / 密度 / 状态栏图标等写入的是系统设置，部分厂商 ROM 会拒绝或覆盖，属正常现象。
 - **电池模拟只改上报值**：不改变真实电量，重启或拔插电源后一般会恢复，建议用完点「恢复」。
 - **CPU 频率依赖内核节点**：部分设备不开放 `cpufreq`，此时性能页无法读数。
+- **分区容量在系统内普遍读不到**：Android 10+ 把 `/proc/partitions`、`/sys/class/block/*/size`、
+  `blockdev --getsize64` 对 `shell` 用户全部封死（实测 Redmi K60 至尊版 / Android 13 全为
+  `Permission denied`）。系统内只有 `df` 覆盖的已挂载分区有真实容量，其余显示「—」；
+  想看完整容量请把设备切到 fastbootd，此时 `fastboot getvar all` 会给出全部分区的实际大小。
+- **bootloader 下只可见物理分区**：内核态 fastboot 的 `getvar all` 只有 `boot` / `dtbo` / `super`
+  这类物理分区；`system` / `vendor` 等 `super` 子分区要进 fastbootd（`is-userspace: yes`）才列得出来。
+- **fastboot 变量格式随模式变化**：bootloader 输出 `key: value` 且容量是裸十六进制（`4000000`），
+  fastbootd 输出 `key:value` 且容量带 `0x` 前缀（`0x4000000`），两种都已适配。
+  另外「变量不存在」在 bootloader 上是「键回显、值为空、退出码 0」，不是报错。
 - **脚本只支持 BAT 子集**：不支持 `for /f`、管道、重定向、`call` 与外部程序，详见页面内「语法范围」。
 - **EDL 直连仅支持 Windows**：传输层基于 WinUSB，其他平台会明确提示不支持。
 - **EDL 需要先换驱动**：Windows 上 9008 默认挂 QDLoader 串口驱动，需用 Zadig 换成 WinUSB 后本工具才能访问；换驱动后 QDLoader 官方工具会暂时不可用。

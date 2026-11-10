@@ -168,4 +168,4 @@ func (a *App) requireFastboot() error {
 	return nil
 }
 
-const appVersion = "1.8.1"
+const appVersion = "1.8.3"

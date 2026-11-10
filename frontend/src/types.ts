@@ -106,6 +106,8 @@ export interface Partition {
   dynamic: boolean
   mountPoint: string
   fsType: string
+  /** physical = by-name 物理分区；logical = super 映射出的逻辑分区 */
+  kind?: 'physical' | 'logical' | 'unknown'
 }
 
 export interface LogEntry {

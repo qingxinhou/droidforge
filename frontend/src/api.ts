@@ -93,6 +93,10 @@ export const api = {
 
   // Fastboot
   fastbootDevices: () => call<string[]>('FastbootDevices'),
+  fastbootPartitions: (serial: string) =>
+    call<Partition[]>('FastbootPartitions', serial),
+  fastbootVars: (serial: string) =>
+    call<Record<string, string>>('FastbootVars', serial),
   fastbootReboot: (serial: string, target: string) =>
     call<void>('FastbootReboot', serial, target),
   flashPartition: (serial: string, partition: string, image: string) =>
