@@ -17,8 +17,10 @@
 import type { Component } from 'vue'
 import {
   AppWindow,
+  Archive,
   BatteryCharging,
   Boxes,
+  Cast,
   Cpu,
   Download,
   Files,
@@ -27,10 +29,13 @@ import {
   LayoutDashboard,
   Monitor,
   Package,
+  PackagePlus,
   Power,
   ScrollText,
   Settings,
+  ShieldAlert,
   ShieldCheck,
+  Siren,
   SlidersHorizontal,
   Terminal,
   Upload,
@@ -109,6 +114,22 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: ['shell', 'command', '命令', '命令行'],
       },
       {
+        path: '/mirror',
+        label: '投屏',
+        desc: '调用 scrcpy 投屏，可调码率、帧率并同时录制',
+        icon: Cast,
+        needs: 'adb',
+        keywords: ['scrcpy', 'screen', '镜像', '录屏', 'cast'],
+      },
+      {
+        path: '/backup',
+        label: '备份助手',
+        desc: '照片、文档、通讯录、短信按类别拉到本机',
+        icon: Archive,
+        needs: 'adb',
+        keywords: ['backup', '导出', '通讯录', '短信', '照片', '相册'],
+      },
+      {
         path: '/reboot',
         label: '重启与模式',
         desc: '进系统、Recovery、Bootloader、fastbootd',
@@ -179,6 +200,14 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: ['payload', 'ota', 'rom', '解包', 'img'],
       },
       {
+        path: '/verify',
+        label: '引导校验',
+        desc: '解析 vbmeta 签名与 rollback index，扫描 ARB 熔断标记',
+        icon: ShieldAlert,
+        needs: 'any',
+        keywords: ['avb', 'vbmeta', 'arb', 'rollback', '防回滚', '熔断', '签名'],
+      },
+      {
         path: '/super',
         label: '超级分区',
         desc: '拆分 super、散包合成 super.img、生成线刷脚本',
@@ -218,8 +247,17 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     id: 'advanced',
     label: '进阶',
-    hint: 'Root 与批量化，风险最高',
+    hint: 'Root、模块与 EDL，风险最高',
     items: [
+      {
+        path: '/modules',
+        label: '模块管理',
+        desc: '批量安装 Magisk / KernelSU / APatch 模块',
+        icon: PackagePlus,
+        needs: 'adb',
+        risk: true,
+        keywords: ['magisk', 'module', 'kernelsu', 'apatch', '刷模块'],
+      },
       {
         path: '/root',
         label: 'Root 方案',
@@ -228,6 +266,15 @@ export const NAV_GROUPS: NavGroup[] = [
         needs: 'adb',
         risk: true,
         keywords: ['magisk', 'kernelsu', 'apatch', 'su', '权限'],
+      },
+      {
+        path: '/edl',
+        label: 'EDL 9008',
+        desc: 'Sahara + Firehose 直接读写闪存分区',
+        icon: Siren,
+        needs: 'any',
+        risk: true,
+        keywords: ['edl', '9008', 'sahara', 'firehose', 'qdl', '救砖', '深刷'],
       },
       {
         path: '/scripts',

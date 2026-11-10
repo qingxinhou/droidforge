@@ -10,6 +10,7 @@ import (
 	"droidforge/internal/fastboot"
 	"droidforge/internal/platform"
 	"droidforge/internal/runner"
+	"droidforge/internal/screen"
 	"droidforge/internal/session"
 	"droidforge/internal/store"
 
@@ -27,6 +28,14 @@ type App struct {
 
 	state *session.State
 	ops   *session.Ops
+
+	// 投屏进程是长驻的，不归 ops 管（ops 会在新任务开始时取消上一个）。
+	screenMu   sync.Mutex
+	screenProc *screen.Process
+
+	// EDL 会话同样长驻，且同一时刻只能有一个。
+	edlMu sync.Mutex
+	edlRT *edlRuntime
 }
 
 // NewApp 创建应用。
@@ -159,4 +168,4 @@ func (a *App) requireFastboot() error {
 	return nil
 }
 
-const appVersion = "1.7.0"
+const appVersion = "1.8.0"

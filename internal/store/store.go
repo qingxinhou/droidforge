@@ -11,6 +11,7 @@ import (
 type Config struct {
 	CustomAdb      string `json:"customAdb"`
 	CustomFastboot string `json:"customFastboot"`
+	CustomScrcpy   string `json:"customScrcpy"`
 	Mirror         string `json:"mirror"`    // GitHub 加速前缀
 	CacheDir       string `json:"cacheDir"`  // 下载与解包缓存
 	OutputDir      string `json:"outputDir"` // 提取镜像输出目录

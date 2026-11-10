@@ -464,3 +464,258 @@ export interface DownloadResult {
   resumed: boolean
   note: string
 }
+
+// ---------------------------------------------------------------------------
+// 引导校验（vbmeta / AVB）
+// ---------------------------------------------------------------------------
+
+export interface VBMetaDescriptor {
+  tag: number
+  kind: string
+  class: number
+  partitionName?: string
+  imageSize?: number
+  flags?: number
+  hashAlgorithm?: string
+  digest?: string
+  salt?: string
+  treeOffset?: number
+  treeSize?: number
+  dataBlockSize?: number
+  hashBlockSize?: number
+  fecNumRoots?: number
+  fecOffset?: number
+  fecSize?: number
+  rootDigest?: string
+  dmVerityVersion?: number
+  cmdline?: string
+  rollbackIndexLocation?: number
+  publicKeyLen?: number
+  key?: string
+  value?: string
+  size: number
+}
+
+export interface VBMetaImage {
+  path: string
+  vbmetaOffset: number
+  vbmetaSize: number
+  footerOriginalSize: number
+  versionMajor: number
+  versionMinor: number
+  algorithmType: number
+  algorithm: string
+  rollbackIndex: number
+  rollbackIndexLocation: number
+  hashSize: number
+  signatureSize: number
+  publicKeySize: number
+  flags: number
+  hashtreeDisabled: boolean
+  verificationDisabled: boolean
+  releaseString: string
+  descriptors: VBMetaDescriptor[]
+  selfHash: string
+  notes: string[]
+}
+
+export interface VBMetaReport {
+  image: VBMetaImage
+  summary: string
+  level: string
+}
+
+export interface ARBHit {
+  offset: number
+  marker: string
+  encoding: string
+  value: number
+  valueOffset: number
+  delta: number
+}
+
+export interface ARBFileReport {
+  path: string
+  size: number
+  scanned: number
+  format: string
+  hits: ARBHit[]
+  values: number[]
+  confidence: string
+  note: string
+}
+
+export interface ARBVerdict {
+  level: string
+  title: string
+  detail: string
+}
+
+export interface ARBReport {
+  file: ARBFileReport
+  verdict: ARBVerdict
+  guest: number
+  guestOk: boolean
+}
+
+// ---------------------------------------------------------------------------
+// 备份
+// ---------------------------------------------------------------------------
+
+export interface BackupCategory {
+  id: string
+  label: string
+  desc: string
+  kind: string
+  paths: string[]
+}
+
+export interface BackupCategoryPlan extends BackupCategory {
+  size: number
+  files: number
+  exists: boolean
+  note: string
+}
+
+export interface BackupPlan {
+  serial: string
+  categories: BackupCategoryPlan[]
+  totalSize: number
+  totalFiles: number
+}
+
+export interface BackupCategoryResult {
+  id: string
+  label: string
+  files: number
+  bytes: number
+  skipped: number
+  error: string
+}
+
+export interface BackupResult {
+  outDir: string
+  files: number
+  bytes: number
+  skipped: number
+  categories: BackupCategoryResult[]
+  manifest: string
+}
+
+export interface BackupOptions {
+  outDir: string
+  categoryIds: string[]
+  skipExisting: boolean
+}
+
+// ---------------------------------------------------------------------------
+// 模块
+// ---------------------------------------------------------------------------
+
+export interface MagiskModule {
+  path: string
+  fileName: string
+  size: number
+  id: string
+  name: string
+  version: string
+  versionCode: string
+  author: string
+  description: string
+  valid: boolean
+  error: string
+}
+
+export interface MagiskManager {
+  kind: string
+  version: string
+  rootOk: boolean
+  note: string
+}
+
+export interface MagiskInstallResult {
+  module: MagiskModule
+  ok: boolean
+  output: string
+  error: string
+}
+
+// ---------------------------------------------------------------------------
+// 投屏
+// ---------------------------------------------------------------------------
+
+export interface ScreenBinary {
+  path: string
+  found: boolean
+  version: string
+  hint: string
+}
+
+export interface ScreenOptions {
+  serial: string
+  adbPath: string
+  bitRate: string
+  maxSize: number
+  maxFps: number
+  turnScreenOff: boolean
+  stayAwake: boolean
+  noAudio: boolean
+  alwaysOnTop: boolean
+  record: string
+}
+
+export interface ScreenRunStatus {
+  running: boolean
+  tail: string
+}
+
+// ---------------------------------------------------------------------------
+// EDL 9008
+// ---------------------------------------------------------------------------
+
+export interface EdlDevice {
+  path: string
+  vid: number
+  pid: number
+  name: string
+}
+
+export interface EdlLoaderInfo {
+  path: string
+  name: string
+  size: number
+  memory: string
+  program: string
+  valid: boolean
+  note: string
+}
+
+export interface EdlPartition {
+  index: number
+  name: string
+  typeGuid: string
+  uniqueGuid: string
+  firstLba: number
+  lastLba: number
+  sectors: number
+  attributes: number
+}
+
+export interface EdlGPT {
+  sectorSize: number
+  lun: number
+  diskGuid: string
+  firstUsableLba: number
+  lastUsableLba: number
+  partitions: EdlPartition[]
+  checksumOk: boolean
+  note: string
+}
+
+export interface EdlStatus {
+  connected: boolean
+  device: string
+  loader: string
+  sectorSize: number
+  partitions: number
+}

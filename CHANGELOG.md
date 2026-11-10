@@ -3,6 +3,59 @@
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.8.0] - 2026-11-10
+
+补齐紫罗兰工具箱的后两批：设备助手（投屏 / 备份 / 模块）与进阶能力（AVB / ARB / EDL 9008）。
+
+### 新增
+
+- **投屏（新页面）**：调用本机 scrcpy 开独立窗口，可调码率、长边上限、帧率，
+  支持关屏投屏、保持常亮、不转发音频、窗口置顶，以及同时录制到 mp4。
+  进程生命周期由主程序管，关掉 scrcpy 窗口等同于停止投屏，状态会同步回界面。
+- **备份助手（新页面）**：按类别把照片、文档、音乐拉到本机。走
+  `adb exec-out tar -cf -` 流式传输，一个连接传完整棵目录，解包时逐文件判断
+  「已存在且大小一致就跳过」，天然支持反复增量备份。通讯录与短信走
+  content provider 查询导出为带 BOM 的 CSV，Excel 直接可读。
+- **模块管理（新页面）**：批量装 Magisk / KernelSU / APatch 模块。解析 zip 里的
+  `module.prop`（兼容内容套在一级子目录里的包），自动识别设备上的模块管理器
+  并选用对应安装命令，逐个推送、安装、清理临时文件。
+- **引导校验（新页面）**：解析 vbmeta 的签名算法、`rollback_index`、flags 与全部
+  描述符；带 `AVBf` footer 的 boot / system 镜像会自动定位 vbmeta 位置。
+  同时对 xbl / abl 这类引导镜像做 anti-rollback 标记扫描，给出候选版本与置信度，
+  并提供两侧版本对比来判断降级是否会触发熔断。
+- **EDL 9008（新页面）**：Sahara 握手 + Firehose 会话，可加载 loader、读多 LUN 的
+  GPT 分区表、按分区读取 / 写入 / 擦除、发送重启。写入按 `MaxPayload` 切段，
+  逐段 ACK 确认，进度实时回报。
+- **OFP 识别**：欧加系 `.ofp` 刷机包按 zip 容器识别，能直接列出内部镜像；
+  OPS 因没有公开规范，明确拒绝而不是猜。
+
+### 实现
+
+- `internal/avb`：按 AOSP `libavb` 的头文件布局实现 vbmeta 解析。描述符 tag 的
+  编码在不同年代工具链出现过两种布局，解析时两种都认；CRC 与 block 长度的
+  一致性只作提示，不阻断解析。
+- `internal/arb`：分块扫描（块间留重叠避免标记被切断），ASCII 与 UTF-16LE 两种
+  编码都找，命中后在标记附近取第一个落在 `1..0xFFFF` 的 4 字节小端整数。
+  置信度按「多个标记是否指向同一个值」判定。
+- `internal/edl`：协议层与传输层分离。Sahara 与 Firehose 的报文编解码是纯函数，
+  用 `net.Pipe` 模拟设备把整个握手与读写时序跑通；传输层在 Windows 上直接调
+  `setupapi.dll` + `winusb.dll`（`syscall` + `LazyDLL`，无 cgo），非 Windows 返回
+  明确的不支持提示。
+- `internal/edl` 的 GPT 解析支持 4096 与 512 两种扇区大小，CRC 不符时照常返回结构
+  并在备注里说明。
+- `internal/backup`：解包时对每个路径做上跳与盘符过滤，tar 里的绝对路径会被
+  规整成相对路径，避免写到备份目录之外。
+- `internal/magisk`：文件名进 shell 命令前先白名单过滤，避免模块名里的特殊字符
+  破坏命令。
+- `internal/runner` 新增 `Stream`，返回原始字节通道，供 tar 流与 Firehose 使用。
+
+### 测试
+
+- 新增 avb 7 项、arb 6 项、backup 7 项、magisk 9 项、edl 18 项、screen 3 项。
+- Sahara 用例完整模拟设备侧状态机，逐字节比对收到的 loader；
+  Firehose 用例覆盖 ACK / NAK、多段写入、分区读取与上下文取消。
+- GPT 用例自造 header 与表项并计算 CRC，覆盖 CRC 不符与签名缺失。
+
 ## [1.7.0] - 2026-11-10
 
 刷机包深加工：super 动态分区可拆可合，线刷脚本可一键生成，整包下载改为多线程断点续传。

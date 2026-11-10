@@ -28,9 +28,15 @@ Windows / macOS / Linux 通用，单文件可执行，**所有命令都在本机
 | **超级分区** | 解析 `super.img` 的 `lp_metadata`，列出全部逻辑分区并按需导出；把散包分区按 `super_def` 分组合成 `super.img`（含双槽位 metadata 与备份） |
 | **线刷脚本** | 由镜像目录生成 `flash-all.bat` / `.sh` / `.txt`，自动处理 fastbootd 切换、槽位后缀与逐步错误中断 |
 | **固件下载** | OTA / 线刷包直链多线程分段下载，断点续传（`.dpart` 状态文件），链接过期给出可读提示 |
+| **引导校验** | 解析 vbmeta 的签名算法、`rollback_index`、flags 与全部描述符（hash / hashtree / chain / kernel cmdline / property）；带 `AVBf` footer 的 boot / system 镜像会自动定位 vbmeta 位置 |
+| **ARB 熔断检测** | 扫描引导镜像（xbl / abl / emmc_appsboot）里的 anti-rollback 标记，给出候选版本与置信度；配合两侧版本对比，判断降级是否会触发熔断 |
 | **OTA 直链提取** | 直接粘贴 full OTA 下载链接，用 HTTP Range 远程定位 `payload.bin`，只下载选中分区真正用到的字节；支持自定义 UA / Referer，也可整包下载 |
 | **一键 Root** | KernelSU / KernelSU Next / Magisk 官方 / Magisk Alpha（阿尔法面具）/ Magisk Delta（德尔塔面具）/ APatch |
+| **模块管理** | 批量安装 Magisk / KernelSU / APatch 模块：解析 `module.prop`、自动识别 root 方案并选择对应安装命令、逐个推送安装并清理临时文件 |
+| **EDL 9008** | Sahara 握手 + Firehose 会话：加载 loader、读 GPT 分区表（多 LUN）、按分区读取 / 写入 / 擦除、发送重启。传输层为 Windows WinUSB（SetupAPI + `winusb.dll`，无 cgo） |
 | **分区管理** | 分区表查看、块设备映射、容量、挂载点，导出分区镜像 |
+| **投屏** | 调用本机 scrcpy 开独立窗口，可调码率 / 长边 / 帧率，支持关屏投屏、常亮、静音转发、窗口置顶与同时录制 |
+| **备份助手** | 照片、文档、音乐按类别用 `tar` 流批量拉取（比逐个 `adb pull` 快一个量级），通讯录与短信导出为带 BOM 的 CSV；已存在且大小一致的文件自动跳过 |
 | **应用管理** | 启用 / 禁用、运行、强行停止、清除数据、保留数据卸载、恢复系统应用、提取安装包（含 split）、Google 套件批量管理、操作记录 |
 | **文件传输** | 单个 / 批量 / 拆分 APK 安装（`install-multiple`）、推送文件、按路径拉取、按包名提取安装包 |
 | **显示控制** | 分辨率、显示密度（DPI）、字体缩放、窗口 / 过渡 / 动画倍率、自动锁屏、按键与文本输入、截图 |
@@ -265,6 +271,13 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 - **电池模拟只改上报值**：不改变真实电量，重启或拔插电源后一般会恢复，建议用完点「恢复」。
 - **CPU 频率依赖内核节点**：部分设备不开放 `cpufreq`，此时性能页无法读数。
 - **脚本只支持 BAT 子集**：不支持 `for /f`、管道、重定向、`call` 与外部程序，详见页面内「语法范围」。
+- **EDL 直连仅支持 Windows**：传输层基于 WinUSB，其他平台会明确提示不支持。
+- **EDL 需要先换驱动**：Windows 上 9008 默认挂 QDLoader 串口驱动，需用 Zadig 换成 WinUSB 后本工具才能访问；换驱动后 QDLoader 官方工具会暂时不可用。
+- **EDL 需要用户自备 loader**：本工具不提供、不下载 `prog_firehose_*.elf`。loader 与机型不匹配时写入会失败，甚至让设备停在 9008。
+- **ARB 检测是启发式的**：ARB 没有跨厂商统一格式，扫描结果只作参考；确定性的判断请用 vbmeta 里的 `rollback_index`。
+- **不支持 OPS 包**：OPS 是 OPPO 早期私有格式，没有公开规范，强行解析只会给出错误结果，因此明确拒绝。
+- **投屏不内嵌画面**：scrcpy 自己开原生窗口，本工具只负责参数与进程管理，不做视频解码内嵌。
+- **备份不含应用数据**：`/sdcard/Android/data` 在 Android 11 以上普遍不可读，应用私有数据不在备份范围内。
 - 刷机相关的最终确认动作仍需要用户在手机上完成（这是厂商的安全设计，工具不会绕过）。
 
 ## 不做的事
@@ -272,8 +285,10 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 为避免误解，这里明确列出本工具**不会**实现的能力：
 
 - **不提供 Bootloader 解锁**：没有 `fastboot flashing unlock` 一键按钮，没有解锁状态改写，也不附带任何解锁指引。解锁请走厂商官方渠道。
-- **不包含漏洞利用**：不涉及 EDL 底层写入、efisp / abl 分区改写、SoC 熔断绕过、提权漏洞链等。
-- **不附带第三方签名载荷**：不内置、不分发任何来源不明的 loader、firehose 或分区镜像。
+- **不绕过厂商授权**：EDL 只实现公开协议的读写流程，不提供、不分发 loader 与固件；对需要签名 loader 或授权账号的机型，写入会被设备拒绝，工具不会尝试绕过。
+- **不做熔断绕过**：ARB 只做只读分析与对比，不提供改写熔断计数或回滚 `rollback_index` 的能力。
+- **不包含漏洞利用**：不涉及 SoC 提权漏洞链、efisp / abl 改写等。
+- **不附带第三方签名载荷**：不内置、不分发任何 loader、firehose 或分区镜像。EDL 用的 loader 必须由用户自己提供。
 - **不做免解锁 Root**：Root 流程假设设备已由用户自行解锁。
 
 ---
@@ -284,7 +299,7 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 - [5ec1cff/payload-dumper](https://github.com/5ec1cff/payload-dumper) — payload 解析的参考实现。
 - [Wails](https://wails.io)、[Vue](https://vuejs.org)、[Lucide](https://lucide.dev)、[ulikunitz/xz](https://github.com/ulikunitz/xz)。
 - [CzJam/gjgjxweb](https://github.com/CzJam/gjgjxweb)（晨钟酱《搞机工具箱》）— 应用管理、显示控制、电池管理、控机脚本等功能的**设计参考**。该项目为 GPL-3.0，本项目与其**没有任何代码复用**，功能均为按 ADB 行为独立实现；如需引用其代码，请遵守 GPL-3.0。
-- [Smart-Paocai/VioletToolBox](https://github.com/Smart-Paocai/VioletToolBox)（紫罗兰工具箱）— super 分区拆合、线刷脚本、多线程下载等功能的**需求与交互参考**。该项目为 C# / GPL-3.0，与本项目语言不同且**没有任何代码复用**：`lp_metadata` 结构按 AOSP `liblp` 的 `metadata_format.h` 独立实现，下载与脚本渲染为自行设计。
+- [Smart-Paocai/VioletToolBox](https://github.com/Smart-Paocai/VioletToolBox)（紫罗兰工具箱）— super 分区拆合、线刷脚本、多线程下载等功能的**需求与交互参考**。该项目为 C# / GPL-3.0，与本项目语言不同且**没有任何代码复用**：`lp_metadata` 结构按 AOSP `liblp` 的 `metadata_format.h` 独立实现，下载、脚本渲染、AVB 解析、Sahara / Firehose 会话均为按公开规范自行设计与实现。EDL 的协议细节参考了高通公开的 `sahara_protocol.h` 与 `firehose` 文档，以及 [bkerler/edl](https://github.com/bkerler/edl) 对报文时序的说明。
 
 ---
 

@@ -1,22 +1,38 @@
 import type {
+  ARBReport,
+  ARBVerdict,
   AppDetail,
   AppInfo,
   BatteryInfo,
+  BackupCategory,
+  BackupOptions,
+  BackupPlan,
+  BackupResult,
   BatteryMock,
   BootImageInfo,
   Config,
   CpuSnapshot,
   DeviceInfo,
   DownloadProbe,
+  EdlDevice,
+  EdlGPT,
+  EdlLoaderInfo,
+  EdlStatus,
   DownloadResult,
   Environment,
   FlashStep,
   InstallResult,
+  MagiskInstallResult,
+  MagiskManager,
+  MagiskModule,
   PackageInfo,
   Partition,
   PayloadInfo,
   RemoteOtaInfo,
   RootStatus,
+  ScreenBinary,
+  ScreenOptions,
+  ScreenRunStatus,
   ScriptResult,
   Solution,
   SplitResult,
@@ -25,6 +41,7 @@ import type {
   SuperBuildPartition,
   SuperMetadata,
   TweaksState,
+  VBMetaReport,
 } from './types'
 
 type GoFn = (...args: any[]) => Promise<any>
@@ -171,6 +188,45 @@ export const api = {
   // 控机脚本
   runScript: (serial: string, source: string) =>
     call<ScriptResult>('RunScript', serial, source),
+
+  // 引导校验
+  inspectVBMeta: (path: string) => call<VBMetaReport>('InspectVBMeta', path),
+  scanARB: (path: string) => call<ARBReport>('ScanARBImage', path),
+  compareARB: (current: number, target: number) => call<ARBVerdict>('CompareARB', current, target),
+
+  // 备份
+  backupCategories: () => call<BackupCategory[]>('BackupCategories'),
+  scanBackup: (serial: string) => call<BackupPlan>('ScanBackup', serial),
+  runBackup: (serial: string, opt: BackupOptions) => call<BackupResult>('RunBackup', serial, opt),
+
+  // 模块
+  inspectModules: (paths: string[]) => call<MagiskModule[]>('InspectModules', paths),
+  scanModuleDir: (dir: string) => call<MagiskModule[]>('ScanModuleDir', dir),
+  pickModule: () => call<MagiskModule | null>('PickModule'),
+  detectRootManager: (serial: string) => call<MagiskManager>('DetectRootManager', serial),
+  installModules: (serial: string, mods: MagiskModule[]) =>
+    call<MagiskInstallResult[]>('InstallModules', serial, mods),
+
+  // 投屏
+  detectScrcpy: () => call<ScreenBinary>('DetectScrcpy'),
+  startScreen: (opt: ScreenOptions) => call<string>('StartScreen', opt),
+  stopScreen: () => call<void>('StopScreen'),
+  screenStatus: () => call<ScreenRunStatus>('ScreenStatus'),
+
+  // EDL
+  edlScanDevices: () => call<EdlDevice[]>('EdlScanDevices'),
+  edlInspectLoader: (path: string) => call<EdlLoaderInfo>('EdlInspectLoader', path),
+  edlConnect: (devicePath: string, loaderPath: string) =>
+    call<EdlGPT | null>('EdlConnect', devicePath, loaderPath),
+  edlGPT: (lun: number) => call<EdlGPT>('EdlGPT', lun),
+  edlReadPartition: (label: string, outPath: string, lun: number) =>
+    call<string>('EdlReadPartition', label, outPath, lun),
+  edlWritePartition: (label: string, imgPath: string, lun: number) =>
+    call<void>('EdlWritePartition', label, imgPath, lun),
+  edlErasePartition: (label: string, lun: number) => call<void>('EdlErasePartition', label, lun),
+  edlReboot: () => call<void>('EdlReboot'),
+  edlDisconnect: () => call<void>('EdlDisconnect'),
+  edlState: () => call<EdlStatus>('EdlState'),
 
   // 风险提示与免责声明
   acceptDisclaimer: (version: number) => call<void>('AcceptDisclaimer', version),

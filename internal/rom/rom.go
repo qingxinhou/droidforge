@@ -88,6 +88,21 @@ func Inspect(path string) (*PackageInfo, error) {
 	switch {
 	case strings.HasSuffix(lower, ".zip"):
 		return inspectZip(info, path, st.Size())
+	case strings.HasSuffix(lower, ".ofp"):
+		// OFP 是欧加系（OPPO / 一加 / 真我）的刷机包，公开的 OFP 就是个 zip。
+		// 加密变体在 zip 头之前还有一段私有数据，zip.OpenReader 会直接失败，
+		// 这里如实说明而不是硬猜密钥。
+		pi, err := inspectZip(info, path, st.Size())
+		if err != nil {
+			return nil, fmt.Errorf("这个 .ofp 不是标准 zip 容器（可能被加密或加了私有头部），本工具不解析加密包：%w", err)
+		}
+		if pi.Kind == "unknown" {
+			pi.Kind = "ofp"
+		}
+		pi.Note = "OFP 刷机包（欧加系）：" + pi.Note
+		return pi, nil
+	case strings.HasSuffix(lower, ".ops"):
+		return nil, fmt.Errorf("OPS 是 OPPO 早期的私有打包格式，没有公开规范，无法保证解析正确。请改用 OFP 包，或先用官方工具转成镜像再提取")
 	case strings.HasSuffix(lower, ".tar"), strings.HasSuffix(lower, ".tar.md5"),
 		strings.HasSuffix(lower, ".tgz"), strings.HasSuffix(lower, ".tar.gz"):
 		return inspectTar(info, path, st.Size())
