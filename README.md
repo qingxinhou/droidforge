@@ -25,6 +25,9 @@ Windows / macOS / Linux 通用，单文件可执行，**所有命令都在本机
 | **刷入镜像** | 单分区刷入，自动识别 boot / init_boot / vendor_boot，A/B 槽位选择，sparse → raw 转换 |
 | **线刷整包** | 扫描镜像目录自动生成刷机顺序，动态分区自动切 fastbootd，支持按分区勾选 |
 | **刷机包提取** | OTA zip（payload.bin）、小米 tgz、三星 tar.md5、镜像文件夹；按分区按需提取，无需解压整包 |
+| **超级分区** | 解析 `super.img` 的 `lp_metadata`，列出全部逻辑分区并按需导出；把散包分区按 `super_def` 分组合成 `super.img`（含双槽位 metadata 与备份） |
+| **线刷脚本** | 由镜像目录生成 `flash-all.bat` / `.sh` / `.txt`，自动处理 fastbootd 切换、槽位后缀与逐步错误中断 |
+| **固件下载** | OTA / 线刷包直链多线程分段下载，断点续传（`.dpart` 状态文件），链接过期给出可读提示 |
 | **OTA 直链提取** | 直接粘贴 full OTA 下载链接，用 HTTP Range 远程定位 `payload.bin`，只下载选中分区真正用到的字节；支持自定义 UA / Referer，也可整包下载 |
 | **一键 Root** | KernelSU / KernelSU Next / Magisk 官方 / Magisk Alpha（阿尔法面具）/ Magisk Delta（德尔塔面具）/ APatch |
 | **分区管理** | 分区表查看、块设备映射、容量、挂载点，导出分区镜像 |
@@ -148,6 +151,8 @@ sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev
 ├── bind_flash.go            # 绑定：fastboot 刷入、擦除、槽位、线刷刷机计划
 ├── bind_image.go            # 绑定：boot / payload / sparse 镜像解析
 ├── bind_ota.go              # 绑定：远程 OTA 直链解析与提取
+├── bind_super.go            # 绑定：super 解析/拆分/合成、线刷脚本生成
+├── bind_download.go         # 绑定：直链探测与多线程断点续传
 ├── bind_root.go             # 绑定：Root 方案与补丁编排
 ├── bind_util.go             # 绑定：文件对话框、剪贴板、外部打开
 ├── bind_config.go           # 绑定：配置读写
@@ -157,6 +162,9 @@ sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev
 │   ├── fastboot/            # fastboot 命令封装（刷入、擦除、变量读取）
 │   ├── device/              # 设备信息采集、分区表、Root 检测
 │   ├── image/               # boot.img / payload.bin / sparse 解析
+│   ├── lp/                  # lp_metadata 解析与生成、super 拆分合成、sparse 读取器
+│   ├── download/            # 多线程分段下载与断点续传
+│   ├── flashscript/         # 线刷脚本（bat / sh / txt）渲染
 │   ├── remote/              # 远程 OTA：HTTP Range、远程 zip 目录、直链提取
 │   ├── rom/                 # 刷机包识别、解包、线刷计划生成
 │   ├── root/                # Root 方案、补丁工具下载与编排
@@ -249,7 +257,9 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 
 - **增量 OTA 不支持**：`SOURCE_COPY` / `SOURCE_BSDIFF` 等操作需要原厂底包才能还原，请在提取时使用完整 OTA 包。
 - **远程直提要求服务端支持 Range**：部分 OTA 链接会 302 到不支持分段请求的镜像，此时只能用「下载整包」。
-- **super.img 内部逻辑分区暂未拆解**：如需 `system.img` 等，请从 payload 或线刷包中提取。
+- **super 拆分只处理单块设备**：虚拟 A/B 的 `_b` 槽位若落在另一块块设备上，拆分时会明确报错而不是输出错误内容。
+- **super 合成不生成 `super_empty.img`**：输出的是带数据与完整 metadata 的完整镜像，用 `fastboot flash super` 刷入；需要 `wipe-super` 流程的场景请用原厂空镜像。
+- **合成结果不保证适配机型**：分区名、槽位与组容量必须与目标设备一致，工具只保证 metadata 结构合法。
 - **Magisk 分支的补丁脚本存在版本差异**：若自动下载的版本补丁失败，可在 Root 页指定本地 APK。
 - **系统调校依赖 ROM**：分辨率 / 密度 / 状态栏图标等写入的是系统设置，部分厂商 ROM 会拒绝或覆盖，属正常现象。
 - **电池模拟只改上报值**：不改变真实电量，重启或拔插电源后一般会恢复，建议用完点「恢复」。
@@ -274,6 +284,7 @@ Wails 的每个绑定方法都可能落在不同 goroutine 上，子进程的输
 - [5ec1cff/payload-dumper](https://github.com/5ec1cff/payload-dumper) — payload 解析的参考实现。
 - [Wails](https://wails.io)、[Vue](https://vuejs.org)、[Lucide](https://lucide.dev)、[ulikunitz/xz](https://github.com/ulikunitz/xz)。
 - [CzJam/gjgjxweb](https://github.com/CzJam/gjgjxweb)（晨钟酱《搞机工具箱》）— 应用管理、显示控制、电池管理、控机脚本等功能的**设计参考**。该项目为 GPL-3.0，本项目与其**没有任何代码复用**，功能均为按 ADB 行为独立实现；如需引用其代码，请遵守 GPL-3.0。
+- [Smart-Paocai/VioletToolBox](https://github.com/Smart-Paocai/VioletToolBox)（紫罗兰工具箱）— super 分区拆合、线刷脚本、多线程下载等功能的**需求与交互参考**。该项目为 C# / GPL-3.0，与本项目语言不同且**没有任何代码复用**：`lp_metadata` 结构按 AOSP `liblp` 的 `metadata_format.h` 独立实现，下载与脚本渲染为自行设计。
 
 ---
 

@@ -3,6 +3,51 @@
 本项目版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.7.0] - 2026-11-10
+
+刷机包深加工：super 动态分区可拆可合，线刷脚本可一键生成，整包下载改为多线程断点续传。
+
+### 新增
+
+- **超级分区（新页面）**：解析 `super.img` 里的 `lp_metadata`，列出全部逻辑分区的
+  名称、大小、所属组、extent 数量与属性（只读 / 带槽位），按需导出为独立 `.img`。
+  直接补上了此前「super 内部逻辑分区暂未拆解」的限制，`system.img` / `vendor.img`
+  不再只能从 payload 或线刷包里找。
+- **散包合成 super**：扫描目录里的分区镜像，按 `super_def` / `dynamic_partitions_info.txt`
+  自动归类到正确的分区组（没有定义文件时统一放进 `default` 组），合成带完整
+  geometry + 双槽位 metadata + 备份的 `super.img`，可直接 `fastboot flash super`。
+- **线刷脚本生成**：把镜像目录渲染成 `flash-all.bat` / `flash-all.sh` / `flash-all.txt`。
+  bat 每步都带 `if errorlevel` 中断，动态分区处自动插入 `fastboot reboot fastboot` 与等待，
+  可指定槽位后缀、末尾重启、刷前 `fastboot -w`。
+- **固件下载（新页面）**：粘贴 OTA / 线刷包直链即可下载，支持多线程分段与断点续传。
+  进度每 2 秒落盘到 `.dpart` 状态文件，中途关掉程序再点一次会从断点继续；
+  服务端不支持 `Range` 时自动降级为单流下载并明确提示。
+- **链接失效可读化**：403 / 404 / 410 直接提示「链接已过期，请重新获取」，不再抛裸状态码。
+
+### 实现
+
+- `internal/lp`：按 AOSP `liblp` 的 `metadata_format.h` 实现 `lp_metadata` 读写。
+  顺序尝试主 metadata、备 metadata 与冗余槽位；geometry 与表区都做 SHA-256 校验，
+  **校验和不符只告警不拒绝解析**（第三方工具改过的镜像很常见）。
+- `internal/lp` 自带 sparse 读取器，把 super.img 的 sparse 块映射成逻辑地址，
+  geometry 与分区数据都能按逻辑偏移直接读，不需要先解成 raw 占掉几个 GB。
+- `internal/download`：先发一次 `Range: bytes=0-0` 探测大小与分段能力，
+  再把文件切成若干段并发写入；`.dpart` 里记录每段完成量，续传时只补没下完的部分。
+  分段进度用互斥锁保护，落盘协程与下载协程不会读到半更新的状态。
+- `internal/flashscript`：渲染逻辑按目标 shell 分支，bat 用 CRLF + `chcp 65001`，
+  sh 用 `set -e`；分区名只在已知带槽位的白名单后追加 `_a` / `_b`
+  （`super` / `userdata` / `modem` 等保持原名）。
+- 合成前会校验分区名重复、文件存在性、指定大小是否小于数据总量，
+  并保证每个分区起点落在 1 MB 对齐处。
+
+### 兼容
+
+- 新增页面挂在「刷机」分组：固件下载 → 刷机包提取 → 超级分区 → 刷入镜像 → 线刷整包 → 分区管理，
+  顺序即推荐的工作流顺序。
+- 命令面板可用 `super` / `动态分区` / `断点续传` / `合并` 等关键词检索到新页面。
+
+---
+
 ## [1.6.0] - 2026-11-10
 
 重新整理功能分类，默认主题改为跟随系统。

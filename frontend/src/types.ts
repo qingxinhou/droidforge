@@ -356,3 +356,111 @@ export interface ScriptResult {
   steps: number
   failures: number
 }
+
+// ---------------------------------------------------------------------------
+// 动态分区（super）
+// ---------------------------------------------------------------------------
+
+export interface SuperExtent {
+  numSectors: number
+  /** 0 = linear（读物理扇区），1 = zero */
+  targetType: number
+  targetData: number
+  targetSource: number
+}
+
+export interface SuperPartition {
+  name: string
+  attributes: number
+  group: string
+  groupIndex: number
+  sizeBytes: number
+  extents: SuperExtent[] | null
+  readOnly: boolean
+  slotSuffixed: boolean
+  disabled: boolean
+}
+
+export interface SuperGroup {
+  name: string
+  flags: number
+  maxSize: number
+}
+
+export interface SuperBlockDevice {
+  name: string
+  firstLogicalSector: number
+  alignment: number
+  size: number
+}
+
+export interface SuperMetadata {
+  path: string
+  major: number
+  minor: number
+  slot: number
+  geometry: {
+    metadataMaxSize: number
+    metadataSlotCount: number
+    logicalBlockSize: number
+  }
+  partitions: SuperPartition[] | null
+  groups: SuperGroup[] | null
+  blockDevices: SuperBlockDevice[] | null
+  totalSize: number
+  checksumOk: boolean
+  sparse: boolean
+  note: string
+}
+
+export interface SuperBuildPartition {
+  name: string
+  path: string
+  group: string
+  sizeBytes: number
+}
+
+/** 提交给合成接口的最小字段集 */
+export interface SuperBuildInput {
+  name: string
+  path: string
+  group: string
+}
+
+export interface SuperBuildOptions {
+  label: string
+  defaultGroup: string
+  blockSize: number
+  alignment: number
+  slotCount: number
+  outputSize: number
+}
+
+export interface SplitResult {
+  name: string
+  path: string
+  size: number
+}
+
+// ---------------------------------------------------------------------------
+// 下载
+// ---------------------------------------------------------------------------
+
+export interface DownloadProbe {
+  url: string
+  fileName: string
+  size: number
+  supportsRange: boolean
+  acceptRanges: string
+  etag: string
+  lastModified: string
+}
+
+export interface DownloadResult {
+  path: string
+  size: number
+  threads: number
+  supportsRange: boolean
+  resumed: boolean
+  note: string
+}

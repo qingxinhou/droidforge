@@ -7,6 +7,8 @@ import type {
   Config,
   CpuSnapshot,
   DeviceInfo,
+  DownloadProbe,
+  DownloadResult,
   Environment,
   FlashStep,
   InstallResult,
@@ -17,6 +19,11 @@ import type {
   RootStatus,
   ScriptResult,
   Solution,
+  SplitResult,
+  SuperBuildInput,
+  SuperBuildOptions,
+  SuperBuildPartition,
+  SuperMetadata,
   TweaksState,
 } from './types'
 
@@ -169,4 +176,19 @@ export const api = {
   acceptDisclaimer: (version: number) => call<void>('AcceptDisclaimer', version),
   declineDisclaimer: () => call<void>('DeclineDisclaimer'),
   resetDisclaimer: () => call<void>('ResetDisclaimer'),
+
+  // 动态分区（super）
+  inspectSuper: (path: string) => call<SuperMetadata>('InspectSuper', path),
+  splitSuper: (path: string, names: string[], outDir: string) =>
+    call<SplitResult[]>('SplitSuper', path, names, outDir),
+  scanSuperParts: (dir: string) => call<SuperBuildPartition[]>('ScanSuperParts', dir),
+  mergeSuper: (parts: SuperBuildInput[], outPath: string, opt: SuperBuildOptions) =>
+    call<SuperMetadata>('MergeSuper', parts, outPath, opt),
+  generateFlashScript: (imagesDir: string, outDir: string, slot: string, reboot: boolean, wipe: boolean) =>
+    call<string[]>('GenerateFlashScript', imagesDir, outDir, slot, reboot, wipe),
+
+  // 下载
+  probeDownload: (link: string) => call<DownloadProbe>('ProbeDownload', link),
+  downloadFile: (link: string, dst: string, threads: number) =>
+    call<DownloadResult>('DownloadFile', link, dst, threads),
 }

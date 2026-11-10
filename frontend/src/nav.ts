@@ -18,7 +18,9 @@ import type { Component } from 'vue'
 import {
   AppWindow,
   BatteryCharging,
+  Boxes,
   Cpu,
+  Download,
   Files,
   HardDrive,
   Layers,
@@ -161,12 +163,28 @@ export const NAV_GROUPS: NavGroup[] = [
     hint: '会写分区，做错不可逆',
     items: [
       {
+        path: '/download',
+        label: '固件下载',
+        desc: '多线程、断点续传下载 OTA 整包',
+        icon: Download,
+        needs: 'any',
+        keywords: ['download', 'ota', '断点续传', '多线程', '直链'],
+      },
+      {
         path: '/extract',
         label: '刷机包提取',
         desc: '本地 OTA 包或直链，导出分区镜像',
         icon: Package,
         needs: 'any',
         keywords: ['payload', 'ota', 'rom', '解包', 'img'],
+      },
+      {
+        path: '/super',
+        label: '超级分区',
+        desc: '拆分 super、散包合成 super.img、生成线刷脚本',
+        icon: Boxes,
+        needs: 'any',
+        keywords: ['super', 'lp_metadata', '动态分区', '合并', '拆分', '逻辑分区'],
       },
       {
         path: '/flash',
